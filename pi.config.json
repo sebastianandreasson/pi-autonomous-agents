@@ -3,6 +3,7 @@
   "adapterCommand": "pi-harness adapter",
   "instructionsFile": "",
   "taskFile": "TODOS.md",
+  "commitMode": "agent",
   "streamTerminal": false,
   "loopRepeatThreshold": 12,
   "samePathRepeatThreshold": 8,

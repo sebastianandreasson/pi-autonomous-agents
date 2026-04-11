@@ -130,6 +130,22 @@ function normalizeRoleModels(raw) {
   return normalized
 }
 
+function normalizeCommitMode(raw) {
+  const value = normalizeString(raw, 'agent').trim().toLowerCase()
+  if (value === 'agent' || value === 'plan') {
+    return value
+  }
+  throw new Error(`Expected commitMode to be "agent" or "plan", received "${raw}"`)
+}
+
+function normalizePromptMode(raw) {
+  const value = normalizeString(raw, 'compact').trim().toLowerCase()
+  if (value === 'compact' || value === 'full') {
+    return value
+  }
+  throw new Error(`Expected promptMode to be "compact" or "full", received "${raw}"`)
+}
+
 function resolveModelProfile(modelProfiles, modelName) {
   if (!modelName || typeof modelName !== 'string') {
     return null
@@ -235,6 +251,13 @@ export function loadConfig(mode = 'once') {
     piModelProfile: resolvedPiModel,
     modelProfiles,
     roleModels,
+    commitMode: normalizeCommitMode(readString('PI_COMMIT_MODE', file.commitMode, 'agent')),
+    promptMode: normalizePromptMode(readString('PI_PROMPT_MODE', file.promptMode, 'compact')),
+    maxPromptChangedFiles: readInt('PI_MAX_PROMPT_CHANGED_FILES', file.maxPromptChangedFiles, 10),
+    maxVisualFeedbackLines: readInt('PI_MAX_VISUAL_FEEDBACK_LINES', file.maxVisualFeedbackLines, 20),
+    maxTesterFeedbackLines: readInt('PI_MAX_TESTER_FEEDBACK_LINES', file.maxTesterFeedbackLines, 32),
+    maxPromptNotesLines: readInt('PI_MAX_PROMPT_NOTES_LINES', file.maxPromptNotesLines, 16),
+    maxVerificationExcerptLines: readInt('PI_MAX_VERIFICATION_EXCERPT_LINES', file.maxVerificationExcerptLines, 40),
     piTools: readString('PI_TOOLS', file.piTools, 'read,bash,edit,write,grep,find,ls'),
     piThinking: readString('PI_THINKING', file.piThinking, ''),
     piNoExtensions: readBool('PI_NO_EXTENSIONS', file.piNoExtensions, false),

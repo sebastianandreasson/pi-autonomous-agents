@@ -4,6 +4,8 @@
   "taskFile": "TODOS.md",
   "developerInstructionsFile": "pi/DEVELOPER.md",
   "testerInstructionsFile": "pi/TESTER.md",
+  "commitMode": "agent",
+  "promptMode": "compact",
   "piModel": "local/text-model",
   "models": {
     "local/text-model": {
@@ -32,7 +34,6 @@
     "developerFix": "local/text-model",
     "developerRetry": "local/text-model",
     "tester": "local/tester-model",
-    "testerCommit": "local/tester-model",
     "visualReview": "local/vision-model"
   },
   "testCommand": "pnpm test:e2e:smoke",

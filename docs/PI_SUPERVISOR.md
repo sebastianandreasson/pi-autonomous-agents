@@ -18,7 +18,7 @@ Each real iteration follows this sequence:
 2. A fast local verification command runs immediately after the developer round.
 3. If verification passes, `tester` reviews the change independently from a skeptical user-facing perspective.
 4. If tester or verification finds a real issue, the supervisor gives the findings back to `developer` for one focused repair pass.
-5. If tester reaches `PASS`, tester provides a commit plan and the harness performs the actual git finalization.
+5. If tester reaches `PASS`, tester creates the commit directly in the same turn by default.
 6. Optionally, every `N` successful iterations, the harness runs a read-only visual review over screenshots and persists the feedback for later runs.
 7. If that visual review returns `FAIL`, `BLOCKED`, or times out, the iteration is not counted as a success and the feedback is carried into later prompts.
 
@@ -69,6 +69,7 @@ Projects typically provide their own `pi.config.json` with fields such as:
 - `models`
 - `piModel`
 - `visualReviewModel`
+- `commitMode`
 
 Model entries may carry their own OpenAI-compatible endpoint settings, so the PI text loop and the multimodal visual reviewer can point at different backends without changing code.
 
@@ -83,7 +84,6 @@ Model entries may carry their own OpenAI-compatible endpoint settings, so the PI
     "developerRetry": "local/dev-model",
     "developerFix": "local/dev-model",
     "tester": "local/tester-model",
-    "testerCommit": "local/tester-model",
     "visualReview": "cloud/vision-model"
   }
 }
@@ -162,15 +162,13 @@ Allowed response `status` values:
 
 ## Git Finalization
 
-The harness is designed to keep commit history structured:
+The default flow keeps commit ownership with the active agent:
 
 1. `developer` should leave a clean, reviewable diff and should not commit.
-2. `tester` should review functionality and, on `PASS`, provide a commit plan:
-   - `COMMIT_MESSAGE: ...`
-   - `COMMIT_FILES:`
-   - `- path/to/file`
-3. The harness stages only those requested files and performs the commit itself.
-4. If the requested plan cannot be isolated safely, the iteration is blocked or failed instead of committing unrelated work.
+2. `tester` should review functionality and, on `PASS`, stage only the task-related files and create the commit directly.
+3. If the working tree is too messy to isolate safely, tester should return `VERDICT: BLOCKED` instead of guessing.
+
+If a repo explicitly needs the older harness-managed commit-plan flow, set `commitMode` to `plan`. In that mode, `testerCommit` and parsed commit plans are used as a compatibility path rather than the default.
 
 ## Persistent Handoffs
 

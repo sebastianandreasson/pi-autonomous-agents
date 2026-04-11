@@ -187,6 +187,36 @@ function createIterationSummary({
   }
 }
 
+function didInvocationCreateCommit(invocation) {
+  return invocation?.beforeSnapshot?.head !== invocation?.afterSnapshot?.head
+}
+
+function clampPromptLines(text, maxLines) {
+  const normalized = String(text ?? '').trim()
+  if (normalized === '') {
+    return ''
+  }
+
+  const lines = normalized.split('\n')
+  if (!Number.isFinite(maxLines) || maxLines <= 0 || lines.length <= maxLines) {
+    return normalized
+  }
+
+  const remaining = lines.length - maxLines
+  return `${lines.slice(0, maxLines).join('\n')}\n... (${remaining} more lines omitted)`
+}
+
+function compactNotePartsForPrompt(config, noteParts, fallback = '(none provided)') {
+  const items = Array.isArray(noteParts) ? noteParts.filter(Boolean) : []
+  if (items.length === 0) {
+    return fallback
+  }
+
+  const maxItems = Math.min(6, items.length)
+  const selected = items.slice(-maxItems)
+  return clampPromptLines(selected.join('\n'), Number(config.maxPromptNotesLines) || 16)
+}
+
 function isInfrastructureVerificationFailure(output) {
   const text = String(output ?? '')
   return [
@@ -301,7 +331,7 @@ async function readLatestVisualFeedback(config) {
   if (trimmed === '') {
     return ''
   }
-  return trimmed.split('\n').slice(0, 80).join('\n')
+  return clampPromptLines(trimmed, Number(config.maxVisualFeedbackLines) || 20)
 }
 
 async function readLatestTesterFeedback(config) {
@@ -310,7 +340,7 @@ async function readLatestTesterFeedback(config) {
   if (trimmed === '') {
     return ''
   }
-  return trimmed.split('\n').slice(0, 120).join('\n')
+  return clampPromptLines(trimmed, Number(config.maxTesterFeedbackLines) || 32)
 }
 
 async function writeTesterFeedback(config, { iteration, phase, task, source, status, output }) {
@@ -628,7 +658,7 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
 async function runFixTurn({ config, iteration, phase, sessionId, sessionFile, testerOutput }) {
   const fixPrompt = buildFixPrompt(
     config,
-    testerOutput.trim().split('\n').slice(-120).join('\n'),
+    clampPromptLines(testerOutput, Number(config.maxVerificationExcerptLines) || 40),
     {
       visualFeedback: await readLatestVisualFeedback(config),
       testerFeedback: await readLatestTesterFeedback(config),
@@ -770,10 +800,16 @@ async function runTesterTurn({
   } else if (testerStatus === 'success' && verdict === 'UNKNOWN') {
     testerStatus = 'stalled'
     terminalReason = 'tester_verdict_unknown'
-  } else if (testerStatus === 'success') {
+  } else if (testerStatus === 'success' && config.commitMode === 'plan') {
     terminalReason = commitPlan.message !== '' && commitPlan.files.length > 0
       ? 'tester_pass_with_commit_plan'
       : 'awaiting_commit_plan'
+  } else if (testerStatus === 'success') {
+    terminalReason = didInvocationCreateCommit(invocation)
+      ? 'tester_pass_with_agent_commit'
+      : invocation.repoChanged
+        ? 'tester_left_uncommitted_changes'
+        : 'awaiting_agent_commit'
   }
 
   return {
@@ -1113,7 +1149,7 @@ async function runIteration({ config, state, iteration }) {
         phase,
         task,
         changedFiles: listChangedFiles(config.cwd),
-        developerNotes: noteParts.join(' | '),
+        developerNotes: compactNotePartsForPrompt(config, noteParts),
         reason: 'tester_review_after_basic_smoke_passed',
       })
 
@@ -1133,14 +1169,14 @@ async function runIteration({ config, state, iteration }) {
 
       let commitPlan = testerInvocation.commitPlan
 
-      if (testerStatus === 'success' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
+      if (testerStatus === 'success' && config.commitMode === 'plan' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
         const testerCommitInvocation = await runTesterCommitTurn({
           config,
           iteration,
           phase,
           task,
           changedFiles: listChangedFiles(config.cwd),
-          developerNotes: noteParts.join(' | '),
+          developerNotes: compactNotePartsForPrompt(config, noteParts),
           reason: 'tester_passed_without_commit',
         })
 
@@ -1160,7 +1196,7 @@ async function runIteration({ config, state, iteration }) {
         commitPlan = testerCommitInvocation.commitPlan
       }
 
-      if (testerStatus === 'success') {
+      if (testerStatus === 'success' && config.commitMode === 'plan') {
         const gitFinalize = await runHarnessGitFinalize({
           config,
           iteration,
@@ -1171,6 +1207,18 @@ async function runIteration({ config, state, iteration }) {
         gitFinalizeStatus = gitFinalize.status
         terminalReason = gitFinalize.terminalReason || terminalReason
         noteParts.push(`git_finalize: ${gitFinalize.notes}`)
+      } else if (testerStatus === 'success') {
+        if (didInvocationCreateCommit(testerInvocation)) {
+          gitFinalizeStatus = 'committed_by_agent'
+          terminalReason = 'completed_phase_step'
+        } else {
+          testerStatus = 'stalled'
+          gitFinalizeStatus = 'awaiting_agent_commit'
+          terminalReason = testerInvocation.repoChanged
+            ? 'tester_left_uncommitted_changes'
+            : 'awaiting_agent_commit'
+          noteParts.push('git_finalize: committed_by_agent=false')
+        }
       }
     } else {
       testerStatus = 'skipped'
@@ -1186,7 +1234,7 @@ async function runIteration({ config, state, iteration }) {
         phase,
         sessionId,
         sessionFile,
-        testerOutput: noteParts.join('\n'),
+        testerOutput: compactNotePartsForPrompt(config, noteParts),
       })
 
       sessionId = fixInvocation.result.sessionId || sessionId
@@ -1222,14 +1270,14 @@ async function runIteration({ config, state, iteration }) {
 
         let commitPlan = testerRecheck.commitPlan
 
-        if (testerStatus === 'success' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
+        if (testerStatus === 'success' && config.commitMode === 'plan' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
           const testerCommitInvocation = await runTesterCommitTurn({
             config,
             iteration,
             phase,
             task,
             changedFiles: listChangedFiles(config.cwd),
-            developerNotes: noteParts.join(' | '),
+            developerNotes: compactNotePartsForPrompt(config, noteParts),
             reason: 'tester_recheck_passed_without_commit',
           })
 
@@ -1249,7 +1297,7 @@ async function runIteration({ config, state, iteration }) {
           commitPlan = testerCommitInvocation.commitPlan
         }
 
-        if (testerStatus === 'success') {
+        if (testerStatus === 'success' && config.commitMode === 'plan') {
           const gitFinalize = await runHarnessGitFinalize({
             config,
             iteration,
@@ -1260,6 +1308,18 @@ async function runIteration({ config, state, iteration }) {
           gitFinalizeStatus = gitFinalize.status
           terminalReason = gitFinalize.terminalReason || terminalReason
           noteParts.push(`git_finalize: ${gitFinalize.notes}`)
+        } else if (testerStatus === 'success') {
+          if (didInvocationCreateCommit(testerRecheck)) {
+            gitFinalizeStatus = 'committed_by_agent'
+            terminalReason = 'completed_phase_step'
+          } else {
+            testerStatus = 'stalled'
+            gitFinalizeStatus = 'awaiting_agent_commit'
+            terminalReason = testerRecheck.repoChanged
+              ? 'tester_left_uncommitted_changes'
+              : 'awaiting_agent_commit'
+            noteParts.push('git_finalize: committed_by_agent=false')
+          }
         }
 
         if (testerStatus === 'success') {

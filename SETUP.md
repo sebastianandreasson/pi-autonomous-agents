@@ -46,6 +46,7 @@ If the repo uses another package manager already, use the repo-native equivalent
   - `taskFile`: usually `TODOS.md`
   - `developerInstructionsFile`: `pi/DEVELOPER.md`
   - `testerInstructionsFile`: `pi/TESTER.md`
+  - `commitMode`: normally `agent`
   - `testCommand`: a fast bounded verification command for this repo
   - `visualCaptureCommand`: only if this repo has a real screenshot capture flow
   - `models` / `piModel` / `visualReviewModel` / `roleModels`: configure the models actually available in this environment
@@ -123,6 +124,7 @@ Recommended pattern:
 - local model for `developerFix`
 - local or slightly stronger model for `tester`
 - stronger frontier model for `visualReview` only if available
+- keep `commitMode` as `agent` unless the repo explicitly needs legacy harness-managed commit-plan parsing
 
 Example shape:
 

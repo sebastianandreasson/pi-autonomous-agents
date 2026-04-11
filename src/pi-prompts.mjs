@@ -1,5 +1,45 @@
 import path from 'node:path'
 
+function clampLines(text, maxLines) {
+  const normalized = String(text ?? '').trim()
+  if (normalized === '') {
+    return ''
+  }
+
+  const lines = normalized.split('\n')
+  if (!Number.isFinite(maxLines) || maxLines <= 0 || lines.length <= maxLines) {
+    return normalized
+  }
+
+  const remaining = lines.length - maxLines
+  return `${lines.slice(0, maxLines).join('\n')}\n... (${remaining} more lines omitted)`
+}
+
+function formatFeedbackSection(label, text, maxLines) {
+  const excerpt = clampLines(text, maxLines)
+  if (excerpt === '') {
+    return ''
+  }
+
+  return `\n${label}:\n${excerpt}\n`
+}
+
+function formatChangedFilesSection(files, maxFiles) {
+  const list = Array.isArray(files) ? files.filter(Boolean) : []
+  if (list.length === 0) {
+    return '- No file changes were detected from the prior turn.'
+  }
+
+  const limit = Number.isFinite(maxFiles) && maxFiles > 0 ? maxFiles : list.length
+  const visible = list.slice(0, limit)
+  const remaining = list.length - visible.length
+  const lines = visible.map((file) => `- ${file}`)
+  if (remaining > 0) {
+    lines.push(`- ... and ${remaining} more files`)
+  }
+  return lines.join('\n')
+}
+
 function displayPath(config, filePath) {
   const relativePath = path.relative(config.cwd, filePath)
   if (
@@ -13,22 +53,25 @@ function displayPath(config, filePath) {
   return path.basename(filePath)
 }
 
-function formatVisualFeedback(visualFeedback) {
-  const text = String(visualFeedback ?? '').trim()
-  if (text === '') {
-    return ''
-  }
-
-  return `\nLatest visual feedback from prior runs:\n${text}\n`
+function formatVisualFeedback(config, visualFeedback) {
+  return formatFeedbackSection(
+    'Latest visual feedback from prior runs',
+    visualFeedback,
+    configMaxLines(config, 'maxVisualFeedbackLines', 20),
+  )
 }
 
-function formatTesterFeedback(testerFeedback) {
-  const text = String(testerFeedback ?? '').trim()
-  if (text === '') {
-    return ''
-  }
+function formatTesterFeedback(config, testerFeedback) {
+  return formatFeedbackSection(
+    'Latest tester feedback from prior runs',
+    testerFeedback,
+    configMaxLines(config, 'maxTesterFeedbackLines', 32),
+  )
+}
 
-  return `\nLatest tester feedback from prior runs:\n${text}\n`
+function configMaxLines(config, key, fallback) {
+  const value = Number(config?.[key])
+  return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
 function indentBlock(text, prefix = '') {
@@ -62,11 +105,42 @@ function repoInstructionsAuthorityLine(config, instructionsFile, usesBundledInst
   return `Repo-local instructions in ${displayPath(config, instructionsFile)} are the primary role contract. Follow them over package defaults when they differ.\n`
 }
 
+function testerPassOwnershipRules(config) {
+  if (config.commitMode === 'plan') {
+    return {
+      successRule: '- If your verdict is PASS, do not run git add or git commit yourself. Provide a commit plan for the harness to execute.',
+      isolationRule: '- The commit plan must include only the files related to this task. If the working tree is too messy to isolate safely, use VERDICT: BLOCKED instead of guessing.',
+      extraRule: '- If you can produce a PASS, include the commit plan in the same response. Avoid making the harness ask for a second commit-only pass.',
+      successFormat: [
+        'If and only if your verdict is PASS, also include exactly this commit plan block before the verdict line:',
+        '- COMMIT_MESSAGE: <one-line commit message>',
+        '- COMMIT_FILES:',
+        '- path/to/file-one',
+        '- path/to/file-two',
+        '',
+        'Do not add commentary on the same lines as COMMIT_MESSAGE or COMMIT_FILES. Put only the message value after COMMIT_MESSAGE:, then one file path per line under COMMIT_FILES:.',
+      ].join('\n'),
+    }
+  }
+
+  return {
+    successRule: '- If your verdict is PASS, stage only the files related to this task and create the git commit yourself before the verdict line.',
+    isolationRule: '- If the working tree is too messy to isolate safely, use VERDICT: BLOCKED instead of guessing.',
+    extraRule: '- Use git status before committing, stage only the related files, and create one concise commit message in the format <type>(<scope>): <summary> when possible.',
+    successFormat: [
+      'If and only if your verdict is PASS, include exactly this block before the verdict line after creating the commit:',
+      '- COMMIT_CREATED: true',
+      '- COMMIT_MESSAGE: <one-line commit message>',
+      '- COMMIT_SHA: <short-or-full-sha>',
+    ].join('\n'),
+  }
+}
+
 export function buildMainPrompt(config, options = {}) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.developerInstructionsFile)
-  const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
-  const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
+  const visualFeedbackSection = formatVisualFeedback(config, options.visualFeedback)
+  const testerFeedbackSection = formatTesterFeedback(config, options.testerFeedback)
   const authorityLine = repoInstructionsAuthorityLine(
     config,
     config.developerInstructionsFile,
@@ -100,45 +174,35 @@ Before stopping:
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 
-Work only on the current phase.
-Select the first unchecked actionable checkbox in phase order.
-Complete that task, or at most 2 tightly related unchecked tasks if they are naturally done together.
+Do one current-phase unchecked task.
 
 Rules:
-- Start by checking git status so you know whether unrelated changes already exist.
-- Update code, config, and docs only as needed for the selected task.
-- Tick only the checkbox items that are actually completed.
-- Do not select "Done when" checkboxes as the active task unless the implementation items in that section are already satisfied.
-- If you discover missing prerequisite work, add a new unchecked checkbox under the same phase, then complete only what is necessary.
-- Do not skip to a later phase unless the current task is blocked.
-- If blocked, add a brief note directly under the relevant task in ${taskFile} explaining the blocker, then stop.
-- Do not create GitHub issue templates, project-management files, or unrelated scaffolding.
-- Do not edit lockfiles, generated files, or unrelated assets.
-- If dependencies must change, edit package.json only, then stop.
-	- Prefer the smallest viable implementation that fully satisfies the selected checkbox.
-	- Avoid broad refactors unless the selected task explicitly requires them.
-${indentBlock(innerLoopValidationRules(config.testCommand), '\t')}
-	- Trust tool results over your own guesses. If a read tool shows file contents, use that exact output instead of arguing with it.
-	- Do not repeatedly rewrite the same file because you suspect a formatting issue. Read once, identify the exact mismatch, then make one focused fix.
-${indentBlock(staleEditRecoveryRules(), '\t')}
-	- Do not create the final commit during the developer pass. Leave a clean diff for the tester to validate and commit if it passes.
+- Start with git status.
+- Select the first unchecked actionable checkbox in phase order.
+- Keep changes minimal and scoped.
+- Tick only completed items.
+- If blocked, note it under the task in ${taskFile} and stop.
+- Do not touch lockfiles, generated files, or unrelated assets.
+- Do not commit in the developer pass.
+${innerLoopValidationRules(config.testCommand)}
+${staleEditRecoveryRules()}
 
 Before stopping:
 - Tick completed checkbox items in ${taskFile}.
-	- Keep changes scoped to one coherent step.
-	- Stop after finishing that step.`
+- Stop after one coherent step.`
 }
 
 export function buildFixPrompt(config, recentVerificationOutput, options = {}) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.developerInstructionsFile)
-  const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
-  const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
+  const visualFeedbackSection = formatVisualFeedback(config, options.visualFeedback)
+  const testerFeedbackSection = formatTesterFeedback(config, options.testerFeedback)
   const authorityLine = repoInstructionsAuthorityLine(
     config,
     config.developerInstructionsFile,
     config.usingBundledDeveloperInstructions,
   )
+  const findings = clampLines(recentVerificationOutput, configMaxLines(config, 'maxVerificationExcerptLines', 40))
 
   if (!config.usingBundledDeveloperInstructions) {
     return `Read ${taskFile} and ${instructionsFile}.
@@ -148,7 +212,7 @@ ${testerFeedbackSection}
 The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
 
 Recent tester findings:
-${recentVerificationOutput}
+${findings}
 
 Harness rules:
 - Start by checking git status so you know which files are already dirty.
@@ -170,34 +234,26 @@ ${testerFeedbackSection}
 The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
 
 Recent tester findings:
-${recentVerificationOutput}
+${findings}
 
 Rules:
-- Start by checking git status so you know which files are already dirty.
-- Do not paper over product bugs by weakening tests.
-- Prefer fixing product code over rewriting tests.
-- Update tests only when the tester exposed a real gap in coverage or testability.
-- Do not perform speculative cleanup or unrelated refactors in this pass.
-- Do not create docs, issue templates, or unrelated scaffolding.
-- Do not edit lockfiles or other generated files.
-- If dependencies must change, edit package.json only, then stop.
-	- Keep changes minimal and focused on the failing behavior.
-${indentBlock(innerLoopValidationRules(config.testCommand), '\t')}
-	- Trust tool results over your own guesses. If a read tool shows file contents, use that exact output instead of arguing with it.
-	- Do not repeatedly rewrite the same file because you suspect a formatting issue. Read once, identify the exact mismatch, then make one focused fix.
-${indentBlock(staleEditRecoveryRules(), '\t')}
-	- Do not create the final commit during the developer fix pass. Leave the repaired diff for the tester to re-check and commit if it passes.
+- Start with git status.
+- Keep the fix narrow.
+- Do not weaken tests to hide product bugs.
+- Do not perform speculative cleanup or unrelated refactors.
+- Do not create the final commit.
+${staleEditRecoveryRules()}
 
 Before stopping:
-	- Tick any checkbox in ${taskFile} only if it is now actually complete.
-	- Stop after one coherent fix.`
+- Tick any checkbox in ${taskFile} only if it is now actually complete.
+- Stop after one coherent fix.`
 }
 
 export function buildSteeringPrompt(config, reason, options = {}) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.developerInstructionsFile)
-  const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
-  const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
+  const visualFeedbackSection = formatVisualFeedback(config, options.visualFeedback)
+  const testerFeedbackSection = formatTesterFeedback(config, options.testerFeedback)
   const authorityLine = repoInstructionsAuthorityLine(
     config,
     config.developerInstructionsFile,
@@ -229,7 +285,7 @@ ${testerFeedbackSection}
 
 Reason for this follow-up: ${reason}
 
-Read ${taskFile}, select the first unchecked actionable checkbox in the current phase, complete one coherent task, tick completed items, run verification, and stop.
+Select the first unchecked actionable checkbox in the current phase, complete one coherent task, tick completed items, run verification, and stop.
 
 Additional guardrails:
 - Do not repeat the same tool call over and over.
@@ -250,20 +306,26 @@ export function buildTesterPrompt(config, {
 }) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.testerInstructionsFile)
-  const visualFeedbackSection = formatVisualFeedback(visualFeedback)
-  const testerFeedbackSection = formatTesterFeedback(testerFeedback)
-  const changedFilesSection = changedFiles.length > 0
-    ? changedFiles.map((file) => `- ${file}`).join('\n')
-    : '- No file changes were detected from the developer turn.'
+  const visualFeedbackSection = formatVisualFeedback(config, visualFeedback)
+  const testerFeedbackSection = formatTesterFeedback(config, testerFeedback)
+  const changedFilesSection = formatChangedFilesSection(
+    changedFiles,
+    configMaxLines(config, 'maxPromptChangedFiles', 10),
+  )
+  const compactDeveloperNotes = clampLines(
+    developerNotes || '(none provided)',
+    configMaxLines(config, 'maxPromptNotesLines', 16),
+  )
   const verificationCommand = config.testCommand.trim() === '' ? '(not configured)' : config.testCommand
   const visualCaptureNote = config.visualReviewEnabled
-    ? `\n- Maintain the screenshot capture flow used by the harness (${config.visualCaptureCommand || 'PI_VISUAL_CAPTURE_CMD'}) so current visual artifacts and manifest are produced for visual review.`
+    ? `\n- Keep the screenshot capture flow working so the harness still produces current visual artifacts for review.`
     : ''
   const authorityLine = repoInstructionsAuthorityLine(
     config,
     config.testerInstructionsFile,
     config.usingBundledTesterInstructions,
   )
+  const passOwnership = testerPassOwnershipRules(config)
 
   if (!config.usingBundledTesterInstructions) {
     return `Read ${taskFile} and ${instructionsFile}.
@@ -277,35 +339,27 @@ Current task: ${task}
 Reason for this tester pass: ${reason}
 
 Developer notes:
-${developerNotes || '(none provided)'}
+${compactDeveloperNotes}
 
 Files changed by the developer:
 ${changedFilesSection}
 
-Harness rules:
-- Start by checking git status so you can separate this task from unrelated dirty files.
-- Follow the repo-local tester instructions for what to verify and which commands to run.
-- If blocked by tooling or environment, state the blocker clearly.
-- If you find a real product bug or incomplete functionality, do not hide it with brittle tests.
-- If you cannot finish a reliable review in one pass, return VERDICT: BLOCKED instead of continuing analysis indefinitely.
-${staleEditRecoveryRules()}
-- If your verdict is PASS, do not run git add or git commit yourself. Provide a commit plan for the harness to execute.
-- The commit plan must include only the files related to this task. If the working tree is too messy to isolate safely, use VERDICT: BLOCKED instead of guessing.
-- If you can produce a PASS, include the commit plan in the same response. Avoid making the harness ask for a second commit-only pass.
-- Stop after one coherent tester pass.${visualCaptureNote}
+Rules:
+- Start with git status.
+- Follow repo-local tester instructions for what to verify and which commands to run.
+- Prefer one focused review pass.
+- If blocked or inconclusive, return VERDICT: BLOCKED.
+- Do not hide real bugs with brittle tests.
+- ${passOwnership.successRule.slice(2)}
+- ${passOwnership.isolationRule.slice(2)}
+- ${passOwnership.extraRule.slice(2)}${visualCaptureNote}
 
 Before the verdict line, include a short section in plain text with:
 - Observed flow:
 - Player-facing result:
 - Regression check:
 
-If and only if your verdict is PASS, also include exactly this commit plan block before the verdict line:
-- COMMIT_MESSAGE: <one-line commit message>
-- COMMIT_FILES:
-- path/to/file-one
-- path/to/file-two
-
-Do not add commentary on the same lines as COMMIT_MESSAGE or COMMIT_FILES. Put only the message value after COMMIT_MESSAGE:, then one file path per line under COMMIT_FILES:.
+${passOwnership.successFormat}
 
 Before stopping, end your final response with exactly one verdict line:
 - VERDICT: PASS
@@ -324,51 +378,28 @@ Current task: ${task}
 Reason for this tester pass: ${reason}
 
 Developer notes:
-${developerNotes || '(none provided)'}
+${compactDeveloperNotes}
 
 Files changed by the developer:
 ${changedFilesSection}
 
-	Your responsibilities:
-	- Inspect the implementation from a skeptical user/tester viewpoint.
-	- Add or update verification focused on the changed behavior.
-	- Prefer browser-driven checks and targeted tests over broad rewrites.
+	Rules:
+	- Start with git status.
 	- Run the repo verification command yourself: ${verificationCommand}
 ${indentBlock(innerLoopValidationRules(verificationCommand), '\t')}
-	- Decide whether the feature is actually functionally correct for the intended task, not just whether the code looks plausible.
-	- For any user-facing flow, validate the actual playable path in the running app, not just the source code.
-	- If the task touches menus, unlocks, progression, classes, routes, shops, onboarding, or gating, verify a fresh-save path so a brand-new player can still start and use the feature.
-${visualCaptureNote}
-
-	Rules:
-	- Start by checking git status so you can separate this task from unrelated dirty files.
-	- Prefer editing tests, fixtures, and minimal observability hooks.
-	- Avoid editing product code unless a tiny testability hook is essential and does not change user-facing behavior.
-	- If you find a real product bug or incomplete functionality, do not hide it with brittle tests.
-	- If blocked by tooling or environment, state the blocker clearly.
-	- Trust tool results over your own guesses. If a read tool shows file contents, use that exact output instead of arguing with it.
-	- If you cannot finish a reliable review in one pass, return VERDICT: BLOCKED instead of continuing analysis indefinitely.
-${indentBlock(staleEditRecoveryRules(), '\t')}
-	- Treat "the player cannot start, continue, select, buy, unlock, or exit correctly" as a FAIL even if the code compiles.
-	- Before PASS, identify at least one concrete player-visible success path you exercised and one thing you checked for regressions.
-	- If your verdict is PASS and the verification command succeeded, do not run git add or git commit yourself. Instead, provide a commit plan for the harness to execute.
-	- The commit plan must include only the files related to this task. If the working tree is too messy to isolate safely, use VERDICT: BLOCKED instead of guessing.
-	- If you can produce a PASS, include the commit plan in the same response. Avoid making the harness ask for a second commit-only pass.
-	- Use a concise commit message in the format <type>(<scope>): <summary> when possible.
-	- Stop after one coherent tester pass.
+	- Prefer one focused browser-driven review pass.
+	- Do not hide real bugs with brittle tests.
+	- If blocked or inconclusive, return VERDICT: BLOCKED.
+${indentBlock(passOwnership.successRule, '\t')}
+${indentBlock(passOwnership.isolationRule, '\t')}
+${indentBlock(passOwnership.extraRule, '\t')}${visualCaptureNote}
 
 	Before the verdict line, include a short section in plain text with:
 	- Observed flow:
 	- Player-facing result:
 	- Regression check:
 
-	If and only if your verdict is PASS, also include exactly this commit plan block before the verdict line:
-	- COMMIT_MESSAGE: <one-line commit message>
-	- COMMIT_FILES:
-	- path/to/file-one
-	- path/to/file-two
-
-	Do not add commentary on the same lines as COMMIT_MESSAGE or COMMIT_FILES. Put only the message value after COMMIT_MESSAGE:, then one file path per line under COMMIT_FILES:.
+${indentBlock(passOwnership.successFormat, '\t')}
 
 	Before stopping, end your final response with exactly one verdict line:
 	- VERDICT: PASS
@@ -387,16 +418,21 @@ export function buildCommitPrompt(config, {
 }) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.testerInstructionsFile)
-  const visualFeedbackSection = formatVisualFeedback(visualFeedback)
-  const testerFeedbackSection = formatTesterFeedback(testerFeedback)
+  const visualFeedbackSection = formatVisualFeedback(config, visualFeedback)
+  const testerFeedbackSection = formatTesterFeedback(config, testerFeedback)
   const authorityLine = repoInstructionsAuthorityLine(
     config,
     config.testerInstructionsFile,
     config.usingBundledTesterInstructions,
   )
-  const changedFilesSection = changedFiles.length > 0
-    ? changedFiles.map((file) => `- ${file}`).join('\n')
-    : '- No changed files were detected. Inspect git status before deciding whether a commit is possible.'
+  const changedFilesSection = formatChangedFilesSection(
+    changedFiles,
+    configMaxLines(config, 'maxPromptChangedFiles', 10),
+  )
+  const compactDeveloperNotes = clampLines(
+    developerNotes || '(none provided)',
+    configMaxLines(config, 'maxPromptNotesLines', 16),
+  )
 
   return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
@@ -409,7 +445,7 @@ Current task: ${task}
 Reason for this follow-up: ${reason}
 
 Developer/tester notes:
-${developerNotes || '(none provided)'}
+${compactDeveloperNotes}
 
 Files currently dirty:
 ${changedFilesSection}
@@ -417,10 +453,9 @@ ${changedFilesSection}
 Your job now is commit-plan finalization only. Do not run git commands yourself.
 
 Rules:
-- Start by checking git status so you can see exactly which files are dirty.
+- Start with git status.
 - Do not change product code, tests, docs, or TODO items in this pass.
 - Select only the files related to this task.
-- Use a concise commit message in the format <type>(<scope>): <summary> when possible.
 - If the working tree is too messy to isolate safely, do not guess. End with VERDICT: BLOCKED.
 
 If you can isolate the correct commit, include exactly this block before the verdict line:

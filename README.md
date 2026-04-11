@@ -100,6 +100,8 @@ For flow debugging, it also writes a machine-readable `.pi-last-iteration.json` 
 - `developerInstructionsFile`: per-project developer instructions
 - `testerInstructionsFile`: per-project tester instructions
 - `roleModels`: optional per-role model overrides
+- `commitMode`: `agent` by default, `plan` only for legacy harness-managed commit parsing
+- `promptMode`: `compact` by default
 - `testCommand`: fast verification command
 - `visualCaptureCommand`: project-defined screenshot capture command
 - `visualFeedbackFile`: latest visual-review handoff
@@ -111,6 +113,10 @@ Keep TODO items extremely small and implementation-shaped when using weaker loca
 
 The adapter heartbeat is PI-RPC-event based. Streaming shell output does not count as progress on its own, so long-running tools should rely on the tool-aware watchdog thresholds rather than terminal streaming.
 
-`piModel` remains the default text model, but you can override specific roles with `roleModels` such as `developer`, `developerRetry`, `developerFix`, `tester`, `testerCommit`, and `visualReview`.
+`piModel` remains the default text model, but you can override specific roles with `roleModels` such as `developer`, `developerRetry`, `developerFix`, `tester`, and `visualReview`. `testerCommit` is only relevant if you opt back into `commitMode: "plan"`.
+
+By default, successful tester passes should stage and create the commit directly in the same PI turn. The old commit-plan parsing flow is still available as `commitMode: "plan"`, but it is now a compatibility mode rather than the default.
+
+Prompt/context handoff is compact by default. The harness now caps prior feedback excerpts, changed-file lists, verification excerpts, and prompt note handoff. If needed, tune `maxPromptChangedFiles`, `maxVisualFeedbackLines`, `maxTesterFeedbackLines`, `maxPromptNotesLines`, and `maxVerificationExcerptLines`.
 
 The harness expects screenshot capture to produce a `manifest.json` plus image files under the configured visual capture directory.
