@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.DS_Store
+.pi-runtime/
+.pi-state.json
+.pi-session-id
+.pi-last-output.txt
+.pi-last-verification.txt
+.pi-changed-files.txt
+pi.log
+pi_telemetry.jsonl
+pi_telemetry.csv
+pi-output/

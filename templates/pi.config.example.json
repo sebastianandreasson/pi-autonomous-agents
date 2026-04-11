@@ -1,0 +1,31 @@
+{
+  "transport": "adapter",
+  "adapterCommand": "pi-harness adapter",
+  "taskFile": "TODOS.md",
+  "developerInstructionsFile": "pi/DEVELOPER.md",
+  "testerInstructionsFile": "pi/TESTER.md",
+  "piModel": "local/text-model",
+  "models": {
+    "local/text-model": {
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "some-key",
+      "vision": false
+    },
+    "local/vision-model": {
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "some-key",
+      "vision": true
+    }
+  },
+  "testCommand": "pnpm test:e2e:smoke",
+  "visualReviewEnabled": true,
+  "visualCaptureCommand": "pnpm test:e2e:visual-capture",
+  "visualReviewModel": "local/vision-model",
+  "visualReviewCommand": "pi-harness visual-review-worker",
+  "visualReviewEveryNSuccesses": 5,
+  "visualFeedbackFile": "pi-output/visual-review/FEEDBACK.md",
+  "testerFeedbackFile": "pi-output/tester-feedback/FEEDBACK.md",
+  "testerFeedbackHistoryDir": "pi-output/tester-feedback/history",
+  "visualReviewHistoryDir": "pi-output/visual-review/history",
+  "visualCaptureDir": "pi-output/visual-capture"
+}
