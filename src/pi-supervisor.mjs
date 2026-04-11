@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import process from 'node:process'
+import path from 'node:path'
 import { loadConfig, resolveRoleModelName, resolveRoleModel } from './pi-config.mjs'
 import {
   buildCommitPrompt,
@@ -40,6 +41,7 @@ import {
   deriveWorkflowStatus,
   shouldPersistLatestTesterFeedback,
 } from './pi-flow.mjs'
+import { runStartupPreflight } from './pi-preflight.mjs'
 
 let stopRequested = false
 
@@ -64,6 +66,7 @@ function printTerminalSummary(config, summary) {
 
   const lines = [
     `[PI supervisor] iteration=${summary.iteration} phase="${summary.phase}"`,
+    `[PI supervisor] task=${summary.taskFile || toDisplayPath(config, config.taskFile)} developer_instructions=${summary.developerInstructionsFile || toDisplayPath(config, config.developerInstructionsFile)} tester_instructions=${summary.testerInstructionsFile || toDisplayPath(config, config.testerInstructionsFile)}`,
     `[PI supervisor] transport=${config.transport} developer_model=${summary.developerModel || resolveRoleModelName(config, 'developer') || '(PI default)'} tester_model=${summary.testerModel || resolveRoleModelName(config, 'tester') || '(PI default)'}`,
     `[PI supervisor] developer=${summary.developerStatus} tester=${summary.testerStatus} verification=${summary.verificationStatus}`,
   ]
@@ -85,6 +88,19 @@ function printTerminalSummary(config, summary) {
   }
 
   process.stderr.write(`${lines.join('\n')}\n`)
+}
+
+function toDisplayPath(config, filePath) {
+  const relativePath = path.relative(config.cwd, filePath)
+  if (
+    relativePath !== ''
+    && !relativePath.startsWith('..')
+    && !path.isAbsolute(relativePath)
+  ) {
+    return relativePath.split(path.sep).join('/')
+  }
+
+  return filePath
 }
 
 function parseTesterVerdict(output) {
@@ -798,6 +814,9 @@ async function runIteration({ config, state, iteration }) {
         notes: 'No unchecked tasks remain in TODOS.md.',
         sessionId: state.sessionId || '',
         outputPath: config.lastAgentOutputFile,
+        taskFile: toDisplayPath(config, config.taskFile),
+        developerInstructionsFile: toDisplayPath(config, config.developerInstructionsFile),
+        testerInstructionsFile: toDisplayPath(config, config.testerInstructionsFile),
         developerModel: developerModelName,
         testerModel: testerModelName,
         visualModel: visualModelName,
@@ -820,7 +839,7 @@ async function runIteration({ config, state, iteration }) {
 
   await appendLog(
     config.logFile,
-    `Starting iteration ${iteration} in phase "${phase}" with transport "${config.transport}"`
+    `Starting iteration ${iteration} in phase "${phase}" with transport "${config.transport}" task=${toDisplayPath(config, config.taskFile)} developer_instructions=${toDisplayPath(config, config.developerInstructionsFile)} tester_instructions=${toDisplayPath(config, config.testerInstructionsFile)} developer_model=${developerModelName || '(PI default)'} tester_model=${testerModelName || '(PI default)'}`
   )
 
   const mainInvocation = await runMainTurnWithRetries({
@@ -1108,6 +1127,9 @@ async function runIteration({ config, state, iteration }) {
       notes: noteParts.join(' | '),
       sessionId,
       outputPath: config.lastAgentOutputFile,
+      taskFile: toDisplayPath(config, config.taskFile),
+      developerInstructionsFile: toDisplayPath(config, config.developerInstructionsFile),
+      testerInstructionsFile: toDisplayPath(config, config.testerInstructionsFile),
       developerModel: developerModelName,
       testerModel: testerModelName,
       visualModel: visualModelName,
@@ -1123,6 +1145,7 @@ async function main() {
   await ensureFileExists(config.developerInstructionsFile, 'developer instructions file')
   await ensureFileExists(config.testerInstructionsFile, 'tester instructions file')
   await ensureTelemetryFiles(config)
+  await runStartupPreflight(config)
 
   let state = await readState(config.stateFile)
   let completedIterations = 0

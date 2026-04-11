@@ -11,6 +11,7 @@ const COMMANDS = new Map([
   ['once', 'pi-supervisor.mjs'],
   ['run', 'pi-supervisor.mjs'],
   ['report', 'pi-report.mjs'],
+  ['clear-history', 'pi-clear-history.mjs'],
   ['visual-once', 'pi-visual-once.mjs'],
   ['adapter', 'pi-rpc-adapter.mjs'],
   ['visual-review-worker', 'pi-visual-review.mjs'],

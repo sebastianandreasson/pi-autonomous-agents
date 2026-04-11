@@ -1,6 +1,15 @@
 import path from 'node:path'
 
-function shortName(filePath) {
+function displayPath(config, filePath) {
+  const relativePath = path.relative(config.cwd, filePath)
+  if (
+    relativePath !== ''
+    && !relativePath.startsWith('..')
+    && !path.isAbsolute(relativePath)
+  ) {
+    return relativePath.split(path.sep).join('/')
+  }
+
   return path.basename(filePath)
 }
 
@@ -46,8 +55,8 @@ function staleEditRecoveryRules() {
 }
 
 export function buildMainPrompt(config, options = {}) {
-  const taskFile = shortName(config.taskFile)
-  const instructionsFile = shortName(config.developerInstructionsFile)
+  const taskFile = displayPath(config, config.taskFile)
+  const instructionsFile = displayPath(config, config.developerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
 
@@ -85,8 +94,8 @@ Before stopping:
 }
 
 export function buildFixPrompt(config, recentVerificationOutput, options = {}) {
-  const taskFile = shortName(config.taskFile)
-  const instructionsFile = shortName(config.developerInstructionsFile)
+  const taskFile = displayPath(config, config.taskFile)
+  const instructionsFile = displayPath(config, config.developerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
 
@@ -120,7 +129,7 @@ Before stopping:
 }
 
 export function buildSteeringPrompt(config, reason, options = {}) {
-  const taskFile = shortName(config.taskFile)
+  const taskFile = displayPath(config, config.taskFile)
   const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
 
@@ -149,8 +158,8 @@ export function buildTesterPrompt(config, {
   visualFeedback = '',
   testerFeedback = '',
 }) {
-  const taskFile = shortName(config.taskFile)
-  const instructionsFile = shortName(config.testerInstructionsFile)
+  const taskFile = displayPath(config, config.taskFile)
+  const instructionsFile = displayPath(config, config.testerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(testerFeedback)
   const changedFilesSection = changedFiles.length > 0
@@ -229,8 +238,8 @@ export function buildCommitPrompt(config, {
   visualFeedback = '',
   testerFeedback = '',
 }) {
-  const taskFile = shortName(config.taskFile)
-  const instructionsFile = shortName(config.testerInstructionsFile)
+  const taskFile = displayPath(config, config.taskFile)
+  const instructionsFile = displayPath(config, config.testerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(testerFeedback)
   const changedFilesSection = changedFiles.length > 0

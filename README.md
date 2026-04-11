@@ -59,12 +59,37 @@ packages/pi-harness/
 pi-harness once
 pi-harness run
 pi-harness report
+pi-harness clear-history
 pi-harness visual-once
 pi-harness adapter
 pi-harness visual-review-worker
 ```
 
 Use `PI_CONFIG_FILE` to point the harness at a project-local config file. If you do not provide one, the bundled generic `pi.config.json` is used as a fallback.
+
+## Setup In Another Repo
+
+After installing the package:
+
+```bash
+npm install -D @sebastianandreasson/pi-autonomous-agents
+```
+
+you can tell another agent in that repo:
+
+```text
+Find SETUP.md in @sebastianandreasson/pi-autonomous-agents and set everything up for this repository.
+```
+
+The package ships a top-level [SETUP.md](./SETUP.md) specifically for that workflow.
+
+If you want to wipe all harness-generated state and start over cleanly in a repo, run:
+
+```bash
+PI_CONFIG_FILE=pi.config.json pi-harness clear-history
+```
+
+The command removes configured harness history/runtime files and verifies that no configured history paths remain afterward.
 
 ## Generic Contracts
 

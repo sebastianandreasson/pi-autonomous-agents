@@ -4,4 +4,10 @@ export {
   deriveWorkflowStatus,
   shouldPersistLatestTesterFeedback,
 } from './pi-flow.mjs'
+export {
+  extractModelIdsFromProviderResponse,
+  parsePiListModelsOutput,
+  runStartupPreflight,
+} from './pi-preflight.mjs'
+export { clearHarnessHistory, collectHistoryTargets } from './pi-history.mjs'
 export { runAgentTurn } from './pi-client.mjs'
