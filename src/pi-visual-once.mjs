@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadConfig } from './pi-config.mjs'
+import { loadConfig, resolveRoleModel } from './pi-config.mjs'
 import {
   appendLog,
   ensureDir,
@@ -11,17 +11,18 @@ import {
 
 async function main() {
   const config = loadConfig('once')
+  const visualReviewModel = resolveRoleModel(config, 'visualReview')
 
   if (config.visualCaptureCommand.trim() === '') {
     throw new Error('visualCaptureCommand is empty. Set PI_VISUAL_CAPTURE_CMD or provide it in your project pi.config.json.')
   }
 
-  if (config.visualReviewModel.trim() === '') {
-    throw new Error('visualReviewModel is empty. Set PI_VISUAL_REVIEW_MODEL or provide it in your project pi.config.json.')
+  if (visualReviewModel.model.trim() === '') {
+    throw new Error('visual review model is empty. Set roleModels.visualReview, PI_VISUAL_REVIEW_MODEL, or provide visualReviewModel in your project pi.config.json.')
   }
 
-  if (!config.visualReviewModelProfile?.baseUrl) {
-    throw new Error(`No model profile/baseUrl configured for visual review model "${config.visualReviewModel}".`)
+  if (!visualReviewModel.modelProfile?.baseUrl) {
+    throw new Error(`No model profile/baseUrl configured for visual review model "${visualReviewModel.model}".`)
   }
 
   await ensureDir(config.visualReviewHistoryDir)
@@ -48,8 +49,8 @@ async function main() {
     changedFiles,
     screenshots: capture.screenshots,
     feedbackFile: config.visualFeedbackFile,
-    model: config.visualReviewModel,
-    modelProfile: config.visualReviewModelProfile,
+    model: visualReviewModel.model,
+    modelProfile: visualReviewModel.modelProfile,
     maxImages: config.visualReviewMaxImages,
   }
 

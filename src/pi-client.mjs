@@ -79,7 +79,7 @@ function parseAdapterResponse(stdout) {
   }
 }
 
-async function runAdapterTurn({ config, sessionId, sessionFile, prompt, iteration, retryCount, reason }) {
+async function runAdapterTurn({ config, model, sessionId, sessionFile, prompt, iteration, retryCount, reason }) {
   if (config.adapterCommand.trim() === '') {
     throw new Error('PI_TRANSPORT=adapter requires PI_ADAPTER_COMMAND to be set.')
   }
@@ -95,7 +95,7 @@ async function runAdapterTurn({ config, sessionId, sessionFile, prompt, iteratio
     testerInstructionsFile: config.testerInstructionsFile,
     runtimeDir: config.piRuntimeDir,
     piCli: config.piCli,
-    model: config.piModel,
+    model: model ?? config.piModel,
     tools: config.piTools,
     thinking: config.piThinking,
     noExtensions: config.piNoExtensions,
@@ -104,9 +104,12 @@ async function runAdapterTurn({ config, sessionId, sessionFile, prompt, iteratio
     noThemes: config.piNoThemes,
     streamTerminal: config.streamTerminal,
     loopRepeatThreshold: config.loopRepeatThreshold,
+    samePathRepeatThreshold: config.samePathRepeatThreshold,
     continueAfterSeconds: config.continueAfterSeconds,
+    toolContinueAfterSeconds: config.toolContinueAfterSeconds,
     continueMessage: config.continueMessage,
     noEventTimeoutSeconds: config.noEventTimeoutSeconds,
+    toolNoEventTimeoutSeconds: config.toolNoEventTimeoutSeconds,
     metadata: {
       iteration,
       retryCount,

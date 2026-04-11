@@ -22,6 +22,29 @@ function formatTesterFeedback(testerFeedback) {
   return `\nLatest tester feedback from prior runs:\n${text}\n`
 }
 
+function indentBlock(text, prefix = '') {
+  return String(text)
+    .split('\n')
+    .map((line) => `${prefix}${line}`)
+    .join('\n')
+}
+
+function innerLoopValidationRules(verificationCommand) {
+  const command = String(verificationCommand ?? '').trim() || 'the configured smoke verification command'
+  return [
+    `- Use ${command} as the fast inner-loop gate. Do not substitute a long real-time full-flow spec unless the task explicitly requires it.`,
+    '- If a long Playwright happy-path spec changes, validate with smoke plus one narrow targeted spec or deterministic state hook, not the entire full-flow run.',
+    '- Reserve long full-flow Playwright specs for an explicit nightly or post-run lane, not the developer turn.',
+  ].join('\n')
+}
+
+function staleEditRecoveryRules() {
+  return [
+    '- After one failed edit attempt, reread the file before trying again.',
+    '- Do not repeat the same exact oldText-based edit on the same file.',
+  ].join('\n')
+}
+
 export function buildMainPrompt(config, options = {}) {
   const taskFile = shortName(config.taskFile)
   const instructionsFile = shortName(config.developerInstructionsFile)
@@ -49,8 +72,10 @@ Rules:
 - If dependencies must change, edit package.json only, then stop.
 	- Prefer the smallest viable implementation that fully satisfies the selected checkbox.
 	- Avoid broad refactors unless the selected task explicitly requires them.
+${indentBlock(innerLoopValidationRules(config.testCommand), '\t')}
 	- Trust tool results over your own guesses. If a read tool shows file contents, use that exact output instead of arguing with it.
 	- Do not repeatedly rewrite the same file because you suspect a formatting issue. Read once, identify the exact mismatch, then make one focused fix.
+${indentBlock(staleEditRecoveryRules(), '\t')}
 	- Do not create the final commit during the developer pass. Leave a clean diff for the tester to validate and commit if it passes.
 
 Before stopping:
@@ -83,8 +108,10 @@ Rules:
 - Do not edit lockfiles or other generated files.
 - If dependencies must change, edit package.json only, then stop.
 	- Keep changes minimal and focused on the failing behavior.
+${indentBlock(innerLoopValidationRules(config.testCommand), '\t')}
 	- Trust tool results over your own guesses. If a read tool shows file contents, use that exact output instead of arguing with it.
 	- Do not repeatedly rewrite the same file because you suspect a formatting issue. Read once, identify the exact mismatch, then make one focused fix.
+${indentBlock(staleEditRecoveryRules(), '\t')}
 	- Do not create the final commit during the developer fix pass. Leave the repaired diff for the tester to re-check and commit if it passes.
 
 Before stopping:
@@ -108,6 +135,8 @@ Read ${taskFile}, select the first unchecked actionable checkbox in the current 
 Additional guardrails:
 - Do not repeat the same tool call over and over.
 - If you already read a file, use that context instead of rereading it unless something changed.
+- If an edit fails once, reread the file before retrying. Do not repeat the same exact edit attempt.
+- Prefer the configured smoke verification path and one narrow targeted check over long full-flow Playwright specs.
 - If you are stuck, make the smallest decisive next action or stop and state the blocker.`
 }
 
@@ -153,6 +182,7 @@ ${changedFilesSection}
 	- Add or update verification focused on the changed behavior.
 	- Prefer browser-driven checks and targeted tests over broad rewrites.
 	- Run the repo verification command yourself: ${verificationCommand}
+${indentBlock(innerLoopValidationRules(verificationCommand), '\t')}
 	- Decide whether the feature is actually functionally correct for the intended task, not just whether the code looks plausible.
 	- For any user-facing flow, validate the actual playable path in the running app, not just the source code.
 	- If the task touches menus, unlocks, progression, classes, routes, shops, onboarding, or gating, verify a fresh-save path so a brand-new player can still start and use the feature.
@@ -165,6 +195,7 @@ ${visualCaptureNote}
 	- If you find a real product bug or incomplete functionality, do not hide it with brittle tests.
 	- If blocked by tooling or environment, state the blocker clearly.
 	- Trust tool results over your own guesses. If a read tool shows file contents, use that exact output instead of arguing with it.
+${indentBlock(staleEditRecoveryRules(), '\t')}
 	- Treat "the player cannot start, continue, select, buy, unlock, or exit correctly" as a FAIL even if the code compiles.
 	- Before PASS, identify at least one concrete player-visible success path you exercised and one thing you checked for regressions.
 	- If your verdict is PASS and the verification command succeeded, do not run git add or git commit yourself. Instead, provide a commit plan for the harness to execute.

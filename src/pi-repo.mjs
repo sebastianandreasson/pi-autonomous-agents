@@ -147,6 +147,18 @@ export function stageFiles(cwd, files) {
   })
 }
 
+export function unstageFiles(cwd, files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    return
+  }
+
+  execFileSync('git', ['restore', '--staged', '--', ...files], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
 export function commitStagedFiles(cwd, message) {
   return execFileSync('git', ['commit', '-m', message], {
     cwd,

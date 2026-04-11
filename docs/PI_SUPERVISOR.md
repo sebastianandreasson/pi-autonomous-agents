@@ -20,6 +20,7 @@ Each real iteration follows this sequence:
 4. If tester or verification finds a real issue, the supervisor gives the findings back to `developer` for one focused repair pass.
 5. If tester reaches `PASS`, tester provides a commit plan and the harness performs the actual git finalization.
 6. Optionally, every `N` successful iterations, the harness runs a read-only visual review over screenshots and persists the feedback for later runs.
+7. If that visual review returns `FAIL`, `BLOCKED`, or times out, the iteration is not counted as a success and the feedback is carried into later prompts.
 
 ## Package Contents
 
@@ -56,7 +57,12 @@ Projects typically provide their own `pi.config.json` with fields such as:
 - `taskFile`
 - `developerInstructionsFile`
 - `testerInstructionsFile`
+- `roleModels`
 - `testCommand`
+- `continueAfterSeconds`
+- `toolContinueAfterSeconds`
+- `noEventTimeoutSeconds`
+- `toolNoEventTimeoutSeconds`
 - `visualCaptureCommand`
 - `visualFeedbackFile`
 - `testerFeedbackFile`
@@ -65,6 +71,27 @@ Projects typically provide their own `pi.config.json` with fields such as:
 - `visualReviewModel`
 
 Model entries may carry their own OpenAI-compatible endpoint settings, so the PI text loop and the multimodal visual reviewer can point at different backends without changing code.
+
+`piModel` is the default text model. Projects can optionally override specific roles through `roleModels`, for example:
+
+```json
+{
+  "piModel": "local/dev-model",
+  "visualReviewModel": "cloud/vision-model",
+  "roleModels": {
+    "developer": "local/dev-model",
+    "developerRetry": "local/dev-model",
+    "developerFix": "local/dev-model",
+    "tester": "local/tester-model",
+    "testerCommit": "local/tester-model",
+    "visualReview": "cloud/vision-model"
+  }
+}
+```
+
+This lets the main developer/tester loop stay on local models while a stronger frontier model is reserved for periodic review roles.
+
+For unattended inner-loop work, `testCommand` should be a bounded smoke gate rather than a long real-time end-to-end happy-path run. Reserve full-flow Playwright journeys for explicit nightly or post-run lanes.
 
 ## Transport Contract
 
@@ -156,6 +183,8 @@ The harness persists two cross-iteration handoff files:
 
 These files are included in later developer/tester prompts, so new runs start with the latest review context.
 
+Commit-plan follow-up passes still write history entries, but they do not replace the latest substantive tester feedback file. That keeps later developer turns grounded in the last real functional review rather than commit bookkeeping.
+
 ## Visual Capture Contract
 
 The visual-review layer is intentionally generic. The harness does not know how to navigate a specific project.
@@ -191,7 +220,10 @@ The built-in adapter mitigates obvious local loops by watching PI RPC tool event
 - repeated identical tool calls are aborted
 - repeated same-path churn is aborted
 - a soft `continue` can be sent after inactivity
+- a separate tool-aware watchdog can tolerate long-running `bash` or browser work without treating the turn as dead
 - a hard no-event timeout aborts a wedged turn instead of hanging indefinitely
+
+Important: terminal streaming does not reset the heartbeat by itself. The watchdog keys off PI RPC events and active tool state, not raw shell output.
 
 ## Telemetry
 

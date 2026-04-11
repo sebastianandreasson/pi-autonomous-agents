@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import process from 'node:process'
-import { loadConfig } from './pi-config.mjs'
+import { loadConfig, resolveRoleModelName, resolveRoleModel } from './pi-config.mjs'
 import {
   buildCommitPrompt,
   buildFixPrompt,
@@ -26,6 +26,7 @@ import {
   runVerification,
   runShellCommand,
   stageFiles,
+  unstageFiles,
   runVisualCapture,
   timestamp,
   writeChangedFiles,
@@ -34,6 +35,11 @@ import {
   writeTextFile,
 } from './pi-repo.mjs'
 import { runAgentTurn } from './pi-client.mjs'
+import {
+  deriveFinalStatusWithVisualReview,
+  deriveWorkflowStatus,
+  shouldPersistLatestTesterFeedback,
+} from './pi-flow.mjs'
 
 let stopRequested = false
 
@@ -58,12 +64,12 @@ function printTerminalSummary(config, summary) {
 
   const lines = [
     `[PI supervisor] iteration=${summary.iteration} phase="${summary.phase}"`,
-    `[PI supervisor] transport=${config.transport} model=${config.piModel || '(PI default)'}`,
+    `[PI supervisor] transport=${config.transport} developer_model=${summary.developerModel || resolveRoleModelName(config, 'developer') || '(PI default)'} tester_model=${summary.testerModel || resolveRoleModelName(config, 'tester') || '(PI default)'}`,
     `[PI supervisor] developer=${summary.developerStatus} tester=${summary.testerStatus} verification=${summary.verificationStatus}`,
   ]
 
   if (summary.visualStatus && summary.visualStatus !== 'not_run') {
-    lines.push(`[PI supervisor] visual=${summary.visualStatus}`)
+    lines.push(`[PI supervisor] visual=${summary.visualStatus} model=${summary.visualModel || resolveRoleModelName(config, 'visualReview') || '(disabled)'}`)
   }
 
   if (summary.notes) {
@@ -111,6 +117,7 @@ async function runAgentInvocation({
   iteration,
   phase,
   prompt,
+  role,
   kind,
   retryCount,
   reason,
@@ -118,8 +125,10 @@ async function runAgentInvocation({
   sessionFile,
 }) {
   const beforeSnapshot = getRepoSnapshot(config.cwd)
+  const resolvedModel = resolveRoleModel(config, role)
   const result = await runAgentTurn({
     config,
+    model: resolvedModel.model,
     sessionId,
     sessionFile,
     prompt,
@@ -153,7 +162,7 @@ async function runAgentInvocation({
     changedFilesCount: changedFiles.length,
     verificationStatus,
     retryCount,
-    notes: result.notes,
+    notes: `${result.notes} role=${role} model=${resolvedModel.model || '(PI default)'}`.trim(),
   })
 
   if (result.sessionId !== '') {
@@ -166,6 +175,8 @@ async function runAgentInvocation({
     result,
     repoChanged,
     changedFiles,
+    role,
+    model: resolvedModel.model,
   }
 }
 
@@ -206,7 +217,9 @@ async function writeTesterFeedback(config, { iteration, phase, task, source, sta
     ``,
   ].join('\n')
 
-  await writeTextFile(config.testerFeedbackFile, content)
+  if (shouldPersistLatestTesterFeedback(source)) {
+    await writeTextFile(config.testerFeedbackFile, content)
+  }
   await writeTextFile(`${config.testerFeedbackHistoryDir}/${iteration}-${source}.md`, content)
 }
 
@@ -246,6 +259,15 @@ async function runHarnessGitFinalize({
   const commitMessage = String(commitPlan.message ?? '').trim()
   let status = 'success'
   let notes = ''
+  const cleanupNewlyStagedFiles = (stagedBefore, stagedNow) => {
+    const stagedBeforeSet = new Set(stagedBefore)
+    const newlyStagedFiles = stagedNow.filter((file) => !stagedBeforeSet.has(file))
+    if (newlyStagedFiles.length > 0) {
+      unstageFiles(config.cwd, newlyStagedFiles)
+      return newlyStagedFiles
+    }
+    return []
+  }
 
   if (commitMessage === '' || requestedFiles.length === 0) {
     status = 'stalled'
@@ -269,18 +291,21 @@ async function runHarnessGitFinalize({
           const unexpectedStaged = stagedAfter.filter((file) => !requestedFiles.includes(file))
 
           if (unexpectedStaged.length > 0) {
+            const cleanedFiles = cleanupNewlyStagedFiles(stagedBefore, stagedAfter)
             status = 'blocked'
-            notes = `commit_blocked_unexpected_staged_files=${unexpectedStaged.join(',')}`
+            notes = `commit_blocked_unexpected_staged_files=${unexpectedStaged.join(',')} unstaged_cleanup=${cleanedFiles.join(',')}`.trim()
           } else if (!stagedAfter.some((file) => requestedFiles.includes(file))) {
+            const cleanedFiles = cleanupNewlyStagedFiles(stagedBefore, stagedAfter)
             status = 'stalled'
-            notes = 'commit_plan_failed_to_stage=true'
+            notes = `commit_plan_failed_to_stage=true unstaged_cleanup=${cleanedFiles.join(',')}`.trim()
           } else {
             commitStagedFiles(config.cwd, commitMessage)
             notes = `commit_created=true files=${filesToStage.join(',')} message=${commitMessage}`
           }
         } catch (error) {
+          const cleanedFiles = cleanupNewlyStagedFiles(stagedBefore, listStagedFiles(config.cwd))
           status = 'failed'
-          notes = `commit_failed=${formatExecError(error)}`
+          notes = `commit_failed=${formatExecError(error)}${cleanedFiles.length > 0 ? ` unstaged_cleanup=${cleanedFiles.join(',')}` : ''}`
         }
       }
     }
@@ -365,6 +390,7 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
       iteration,
       phase,
       prompt,
+      role: attempt === 0 ? 'developer' : 'developerRetry',
       kind: 'main_agent',
       retryCount: attempt,
       reason,
@@ -438,6 +464,7 @@ async function runFixTurn({ config, iteration, phase, sessionId, sessionFile, te
     iteration,
     phase,
     prompt: fixPrompt,
+    role: 'developerFix',
     kind: 'fix_agent',
     retryCount: 0,
     reason: 'verification_failed',
@@ -545,6 +572,7 @@ async function runTesterTurn({
     iteration,
     phase,
     prompt,
+    role: 'tester',
     kind: 'tester_agent',
     retryCount: 0,
     reason,
@@ -601,6 +629,7 @@ async function runTesterCommitTurn({
     iteration,
     phase,
     prompt,
+    role: 'testerCommit',
     kind: 'tester_commit',
     retryCount: 0,
     reason,
@@ -670,6 +699,7 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
     }
   }
 
+  const visualReviewModel = resolveRoleModel(config, 'visualReview')
   const reviewRequest = {
     iteration,
     phase,
@@ -677,8 +707,8 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
     changedFiles,
     screenshots: capture.screenshots,
     feedbackFile: config.visualFeedbackFile,
-    model: config.visualReviewModel,
-    modelProfile: config.visualReviewModelProfile,
+    model: visualReviewModel.model,
+    modelProfile: visualReviewModel.modelProfile,
     maxImages: config.visualReviewMaxImages,
   }
 
@@ -731,16 +761,20 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
     changedFilesCount: changedFiles.length,
     verificationStatus: 'not_run',
     retryCount: 0,
-    notes: `verdict=${verdict} feedback=${config.visualFeedbackFile}`.trim(),
+    notes: `verdict=${verdict} feedback=${config.visualFeedbackFile} role=visualReview model=${visualReviewModel.model || '(unset)'}`.trim(),
   })
 
   return {
     status,
-    notes: `visual_verdict=${verdict} feedback=${config.visualFeedbackFile}`,
+    notes: `visual_verdict=${verdict} feedback=${config.visualFeedbackFile} role=visualReview model=${visualReviewModel.model || '(unset)'}`,
   }
 }
 
 async function runIteration({ config, state, iteration }) {
+  const developerModelName = resolveRoleModelName(config, 'developer')
+  const testerModelName = resolveRoleModelName(config, 'tester')
+  const visualReviewRoleModel = resolveRoleModel(config, 'visualReview')
+  const visualModelName = visualReviewRoleModel.model
   const taskInfo = findFirstUncheckedTaskInfo(config.taskFile)
   if (!taskInfo.hasUncheckedTasks) {
     await appendLog(config.logFile, 'No unchecked tasks remain in TODOS.md')
@@ -749,7 +783,7 @@ async function runIteration({ config, state, iteration }) {
         ...state,
         iteration,
         lastTransport: config.transport,
-        lastPiModel: config.piModel,
+        lastPiModel: developerModelName,
         lastPhase: taskInfo.phase,
         lastStatus: 'complete',
         lastVerificationStatus: 'not_needed',
@@ -764,6 +798,9 @@ async function runIteration({ config, state, iteration }) {
         notes: 'No unchecked tasks remain in TODOS.md.',
         sessionId: state.sessionId || '',
         outputPath: config.lastAgentOutputFile,
+        developerModel: developerModelName,
+        testerModel: testerModelName,
+        visualModel: visualModelName,
       },
       shouldStop: true,
     }
@@ -773,7 +810,7 @@ async function runIteration({ config, state, iteration }) {
   const task = taskInfo.task || 'unknown'
   const canResumePriorSession = (
     state.lastTransport === config.transport
-    && state.lastPiModel === config.piModel
+    && state.lastPiModel === developerModelName
     && state.lastStatus === 'success'
   )
   const startingSessionId = canResumePriorSession
@@ -984,37 +1021,25 @@ async function runIteration({ config, state, iteration }) {
     finalVerificationStatus = 'not_run'
   }
 
-  const finalStatus = (
-    developerStatus === 'success'
-    && testerStatus === 'success'
-    && (
-      finalVerificationStatus === 'passed'
-      || finalVerificationStatus === 'skipped'
-      || finalVerificationStatus === 'not_run'
-    )
-  )
-    ? 'success'
-    : developerStatus === 'complete'
-      ? 'complete'
-      : developerStatus !== 'success'
-        ? developerStatus
-        : testerStatus !== 'success'
-          ? testerStatus
-          : finalVerificationStatus
+  const workflowStatus = deriveWorkflowStatus({
+    developerStatus,
+    testerStatus,
+    verificationStatus: finalVerificationStatus,
+  })
 
-  const successfulIterations = (
-    finalStatus === 'success'
+  const candidateSuccessfulIterations = (
+    workflowStatus === 'success'
       ? (state.successfulIterations ?? 0) + 1
       : (state.successfulIterations ?? 0)
   )
 
   const shouldRunVisualReview = (
     config.visualReviewEnabled
-    && finalStatus === 'success'
-    && config.visualReviewModel.trim() !== ''
-    && !!config.visualReviewModelProfile?.baseUrl
+    && workflowStatus === 'success'
+    && visualReviewRoleModel.model.trim() !== ''
+    && !!visualReviewRoleModel.modelProfile?.baseUrl
     && config.visualReviewEveryNSuccesses > 0
-    && successfulIterations % config.visualReviewEveryNSuccesses === 0
+    && candidateSuccessfulIterations % config.visualReviewEveryNSuccesses === 0
   )
 
   if (shouldRunVisualReview) {
@@ -1031,10 +1056,21 @@ async function runIteration({ config, state, iteration }) {
     visualStatus = 'skipped'
   }
 
+  const finalStatus = deriveFinalStatusWithVisualReview({
+    workflowStatus,
+    visualStatus,
+  })
+
+  const successfulIterations = (
+    finalStatus === 'success'
+      ? candidateSuccessfulIterations
+      : (state.successfulIterations ?? 0)
+  )
+
   const nextState = {
     iteration,
     lastTransport: config.transport,
-    lastPiModel: config.piModel,
+    lastPiModel: developerModelName,
     sessionId,
     sessionFile,
     consecutiveFailures: (
@@ -1072,6 +1108,9 @@ async function runIteration({ config, state, iteration }) {
       notes: noteParts.join(' | '),
       sessionId,
       outputPath: config.lastAgentOutputFile,
+      developerModel: developerModelName,
+      testerModel: testerModelName,
+      visualModel: visualModelName,
     },
     shouldStop: false,
   }

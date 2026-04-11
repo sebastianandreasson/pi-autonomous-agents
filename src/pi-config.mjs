@@ -118,6 +118,18 @@ function readObject(name, raw, fallback) {
   return value
 }
 
+function normalizeRoleModels(raw) {
+  const value = readObject('roleModels', raw, {})
+  const normalized = {}
+  for (const [role, modelName] of Object.entries(value)) {
+    if (!hasValue(modelName)) {
+      continue
+    }
+    normalized[String(role)] = String(modelName)
+  }
+  return normalized
+}
+
 function resolveModelProfile(modelProfiles, modelName) {
   if (!modelName || typeof modelName !== 'string') {
     return null
@@ -143,12 +155,34 @@ function resolveModelProfile(modelProfiles, modelName) {
   }
 }
 
+export function resolveRoleModelName(config, role) {
+  const roleName = String(role ?? '').trim()
+  if (roleName !== '' && hasValue(config?.roleModels?.[roleName])) {
+    return String(config.roleModels[roleName])
+  }
+
+  if (roleName === 'visualReview') {
+    return String(config?.visualReviewModel ?? '')
+  }
+
+  return String(config?.piModel ?? '')
+}
+
+export function resolveRoleModel(config, role) {
+  const model = resolveRoleModelName(config, role)
+  return {
+    model,
+    modelProfile: resolveModelProfile(config?.modelProfiles ?? {}, model),
+  }
+}
+
 export function loadConfig(mode = 'once') {
   const cwd = process.cwd()
   const repoConfig = readRepoConfig(cwd)
   const file = repoConfig.values
   const bundledAdapterCommand = 'pi-harness adapter'
   const modelProfiles = readObject('models', file.models, {})
+  const roleModels = normalizeRoleModels(file.roleModels)
   const piModel = readString('PI_MODEL', file.piModel, '')
   const visualReviewModel = readString('PI_VISUAL_REVIEW_MODEL', file.visualReviewModel, '')
   const resolvedPiModel = resolveModelProfile(modelProfiles, piModel)
@@ -192,6 +226,7 @@ export function loadConfig(mode = 'once') {
     piModel,
     piModelProfile: resolvedPiModel,
     modelProfiles,
+    roleModels,
     piTools: readString('PI_TOOLS', file.piTools, 'read,bash,edit,write,grep,find,ls'),
     piThinking: readString('PI_THINKING', file.piThinking, ''),
     piNoExtensions: readBool('PI_NO_EXTENSIONS', file.piNoExtensions, false),
@@ -201,9 +236,11 @@ export function loadConfig(mode = 'once') {
     streamTerminal: readBool('PI_STREAM_TERMINAL', file.streamTerminal, false),
     loopRepeatThreshold: readInt('PI_LOOP_REPEAT_THRESHOLD', file.loopRepeatThreshold, 12),
     samePathRepeatThreshold: readInt('PI_SAME_PATH_REPEAT_THRESHOLD', file.samePathRepeatThreshold, 8),
-    continueAfterSeconds: readInt('PI_CONTINUE_AFTER', file.continueAfterSeconds, 90),
+    continueAfterSeconds: readInt('PI_CONTINUE_AFTER', file.continueAfterSeconds, 300),
     continueMessage: readString('PI_CONTINUE_MESSAGE', file.continueMessage, 'continue'),
-    noEventTimeoutSeconds: readInt('PI_NO_EVENT_TIMEOUT', file.noEventTimeoutSeconds, 180),
+    noEventTimeoutSeconds: readInt('PI_NO_EVENT_TIMEOUT', file.noEventTimeoutSeconds, 900),
+    toolContinueAfterSeconds: readInt('PI_TOOL_CONTINUE_AFTER', file.toolContinueAfterSeconds, 900),
+    toolNoEventTimeoutSeconds: readInt('PI_TOOL_NO_EVENT_TIMEOUT', file.toolNoEventTimeoutSeconds, 1800),
     testCommand: readString('PI_TEST_CMD', file.testCommand, ''),
     agentTimeoutSeconds: readInt('PI_AGENT_TIMEOUT', file.agentTimeoutSeconds, 3600),
     verificationTimeoutSeconds: readInt('PI_VERIFICATION_TIMEOUT', file.verificationTimeoutSeconds, 300),

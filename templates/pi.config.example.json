@@ -11,13 +11,35 @@
       "apiKey": "some-key",
       "vision": false
     },
-    "local/vision-model": {
+    "local/tester-model": {
       "baseUrl": "http://localhost:8000/v1",
       "apiKey": "some-key",
+      "vision": false
+    },
+    "cloud/reviewer-model": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "vision": false
+    },
+    "local/vision-model": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKeyEnv": "OPENAI_API_KEY",
       "vision": true
     }
   },
+  "roleModels": {
+    "developer": "local/text-model",
+    "developerFix": "local/text-model",
+    "developerRetry": "local/text-model",
+    "tester": "local/tester-model",
+    "testerCommit": "local/tester-model",
+    "visualReview": "local/vision-model"
+  },
   "testCommand": "pnpm test:e2e:smoke",
+  "continueAfterSeconds": 300,
+  "toolContinueAfterSeconds": 900,
+  "noEventTimeoutSeconds": 900,
+  "toolNoEventTimeoutSeconds": 1800,
   "visualReviewEnabled": true,
   "visualCaptureCommand": "pnpm test:e2e:visual-capture",
   "visualReviewModel": "local/vision-model",

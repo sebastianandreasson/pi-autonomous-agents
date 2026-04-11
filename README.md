@@ -71,9 +71,16 @@ Use `PI_CONFIG_FILE` to point the harness at a project-local config file. If you
 - `taskFile`: usually `TODOS.md`
 - `developerInstructionsFile`: per-project developer instructions
 - `testerInstructionsFile`: per-project tester instructions
+- `roleModels`: optional per-role model overrides
 - `testCommand`: fast verification command
 - `visualCaptureCommand`: project-defined screenshot capture command
 - `visualFeedbackFile`: latest visual-review handoff
 - `testerFeedbackFile`: latest tester-review handoff
+
+For unattended loops, keep `testCommand` fast and bounded, such as a smoke suite. Long real-time Playwright happy-path specs belong in an explicit nightly or post-run lane, not the default developer/tester inner loop.
+
+The adapter heartbeat is PI-RPC-event based. Streaming shell output does not count as progress on its own, so long-running tools should rely on the tool-aware watchdog thresholds rather than terminal streaming.
+
+`piModel` remains the default text model, but you can override specific roles with `roleModels` such as `developer`, `developerRetry`, `developerFix`, `tester`, `testerCommit`, and `visualReview`.
 
 The harness expects screenshot capture to produce a `manifest.json` plus image files under the configured visual capture directory.

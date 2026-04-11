@@ -4,6 +4,12 @@ import { createInterface } from 'node:readline'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import process from 'node:process'
+import {
+  formatHeartbeatReason,
+  formatHeartbeatTimeoutMessage,
+  getHeartbeatDecision,
+  resolveHeartbeatConfig,
+} from './pi-heartbeat.mjs'
 
 function createJsonlReader(stream, onLine) {
   const rl = createInterface({ input: stream })
@@ -130,20 +136,22 @@ async function run() {
   let loopDetected = false
   let loopSignature = ''
   let abortRequested = false
-  const continueAfterSeconds = Number.isFinite(Number(request.continueAfterSeconds))
-    ? Number(request.continueAfterSeconds)
-    : 90
+  const {
+    continueAfterSeconds,
+    noEventTimeoutSeconds,
+    toolContinueAfterSeconds,
+    toolNoEventTimeoutSeconds,
+  } = resolveHeartbeatConfig(request)
   const continueMessage = typeof request.continueMessage === 'string' && request.continueMessage.trim() !== ''
     ? request.continueMessage.trim()
     : 'continue'
-  const noEventTimeoutSeconds = Number.isFinite(Number(request.noEventTimeoutSeconds))
-    ? Number(request.noEventTimeoutSeconds)
-    : 180
   let agentStarted = false
   let agentEnded = false
   let heartbeatTimedOut = false
   let heartbeatReason = ''
   let lastEventAt = Date.now()
+  let activeToolName = ''
+  let activeToolStartedAt = 0
   let heartbeatInterval = null
   let continueAttempted = false
   let continueAccepted = false
@@ -181,16 +189,16 @@ async function run() {
     void send({ type: 'abort' }).catch(() => {})
   }
 
-  const requestAbortForHeartbeat = () => {
+  const requestAbortForHeartbeat = (decision) => {
     if (abortRequested) {
       return
     }
 
     abortRequested = true
     heartbeatTimedOut = true
-    heartbeatReason = `no_pi_events_for=${noEventTimeoutSeconds}s`
+    heartbeatReason = formatHeartbeatReason(decision)
     closeAssistantLine()
-    writeLive(`[PI guard] no PI events for ${noEventTimeoutSeconds}s. Aborting current turn (pid=${child.pid ?? 'unknown'}).\n`)
+    writeLive(`[PI guard] ${formatHeartbeatTimeoutMessage(decision)} Aborting current turn (pid=${child.pid ?? 'unknown'}).\n`)
     void send({ type: 'abort' }).catch(() => {})
     child.kill('SIGTERM')
     setTimeout(() => {
@@ -200,14 +208,17 @@ async function run() {
     }, 1000)
   }
 
-  const requestSoftContinue = () => {
+  const requestSoftContinue = (decision) => {
     if (abortRequested || continueAttempted || agentEnded) {
       return
     }
 
     continueAttempted = true
     closeAssistantLine()
-    writeLive(`[PI guard] no PI events for ${continueAfterSeconds}s. Sending soft continue prompt.\n`)
+    const context = decision.activeToolName
+      ? ` while tool "${decision.activeToolName}" is running`
+      : ''
+    writeLive(`[PI guard] no PI events for ${decision.continueAfterSeconds}s${context}. Sending soft continue prompt.\n`)
     void send({ type: 'prompt', message: continueMessage })
       .then((response) => {
         if (response?.success) {
@@ -280,6 +291,8 @@ async function run() {
       const argsText = formatValue(data.args)
       const suffix = argsText === '' ? '' : ` ${argsText}`
       const signature = `${data.toolName}${suffix}`
+      activeToolName = String(data.toolName ?? '')
+      activeToolStartedAt = Date.now()
       const target = extractToolTarget(data.toolName, data.args)
       if (signature === lastToolSignature) {
         repeatedToolCount += 1
@@ -315,6 +328,8 @@ async function run() {
 
     if (data.type === 'tool_execution_end') {
       closeAssistantLine()
+      activeToolName = ''
+      activeToolStartedAt = 0
       writeLive(`[PI tool:end] ${data.toolName} ${data.isError ? 'error' : 'ok'}\n`)
     }
 
@@ -352,17 +367,29 @@ async function run() {
   })
 
   heartbeatInterval = setInterval(() => {
-    if (!agentStarted || heartbeatTimedOut || child.exitCode !== null || agentEnded) {
+    const decision = getHeartbeatDecision({
+      now: Date.now(),
+      agentStarted,
+      agentEnded,
+      heartbeatTimedOut,
+      childExited: child.exitCode !== null,
+      lastEventAt,
+      continueAttempted,
+      activeToolName,
+      activeToolStartedAt,
+      continueAfterSeconds,
+      noEventTimeoutSeconds,
+      toolContinueAfterSeconds,
+      toolNoEventTimeoutSeconds,
+    })
+
+    if (decision.action === 'soft_continue') {
+      requestSoftContinue(decision)
       return
     }
 
-    if (!continueAttempted && Date.now() - lastEventAt > continueAfterSeconds * 1000) {
-      requestSoftContinue()
-      return
-    }
-
-    if (Date.now() - lastEventAt > noEventTimeoutSeconds * 1000) {
-      requestAbortForHeartbeat()
+    if (decision.action === 'abort') {
+      requestAbortForHeartbeat(decision)
     }
   }, 1000)
 
@@ -395,7 +422,13 @@ async function run() {
         status: 'timed_out',
         output: [
           '[heartbeat_timeout]',
-          `No PI RPC events were received for ${noEventTimeoutSeconds} seconds.`,
+          formatHeartbeatTimeoutMessage({
+            noEventTimeoutSeconds,
+            activeToolName,
+            toolRuntimeSeconds: activeToolStartedAt > 0
+              ? Math.max(0, Math.floor((Date.now() - activeToolStartedAt) / 1000))
+              : 0,
+          }),
           stderr.trim() !== '' ? `\n[stderr]\n${stderr.trim()}` : '',
         ].join('\n').trim(),
         notes: [
@@ -437,6 +470,7 @@ async function run() {
       `tool_calls=${toolCalls}`,
       `tool_errors=${toolErrors}`,
       `message_updates=${messageUpdates}`,
+      activeToolName !== '' ? `active_tool=${activeToolName}` : '',
       continueAttempted ? `continue_attempted=${continueMessage}` : '',
       continueAccepted ? 'continue_accepted=true' : '',
       continueRejected ? 'continue_rejected=true' : '',
