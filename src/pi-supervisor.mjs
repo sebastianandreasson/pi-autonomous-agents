@@ -79,6 +79,14 @@ function printTerminalSummary(config, summary) {
     lines.push(`[PI supervisor] notes=${summary.notes}`)
   }
 
+  if (summary.terminalReason) {
+    lines.push(`[PI supervisor] terminal_reason=${summary.terminalReason}`)
+  }
+
+  if (summary.commitPlanFound !== undefined) {
+    lines.push(`[PI supervisor] commit_plan_found=${summary.commitPlanFound}`)
+  }
+
   if (summary.sessionId) {
     lines.push(`[PI supervisor] session=${summary.sessionId}`)
   }
@@ -89,6 +97,10 @@ function printTerminalSummary(config, summary) {
 
   if (config.lastPromptFile) {
     lines.push(`[PI supervisor] last_prompt=${toDisplayPath(config, config.lastPromptFile)}`)
+  }
+
+  if (config.lastIterationSummaryFile) {
+    lines.push(`[PI supervisor] iteration_summary=${toDisplayPath(config, config.lastIterationSummaryFile)}`)
   }
 
   process.stderr.write(`${lines.join('\n')}\n`)
@@ -111,6 +123,68 @@ function parseTesterVerdict(output) {
   const raw = String(output ?? '')
   const match = raw.match(/VERDICT:\s*(PASS|FAIL|BLOCKED)\s*$/im)
   return match?.[1]?.toUpperCase() ?? 'UNKNOWN'
+}
+
+function buildRetryReason(invocation) {
+  const loopSignature = String(invocation?.result?.loopSignature ?? '')
+  const notes = String(invocation?.result?.notes ?? '')
+
+  if (loopSignature.startsWith('same_path:')) {
+    const target = loopSignature.slice('same_path:'.length)
+    return `The previous turn got stuck repeatedly editing ${target}. Reread ${target} exactly once before any new edit. Switch approach. Do not attempt another exact oldText patch on ${target} unless the file changed since the failed attempt.`
+  }
+
+  if (notes.includes('loop_detected=')) {
+    return `The previous turn got stuck repeating the same tool call (${notes}). Continue from the current repo state without rereading the same file over and over.`
+  }
+
+  return 'The previous turn stalled or timed out. Continue from the current repo state.'
+}
+
+function formatIterationSummary(summary) {
+  return `${JSON.stringify(summary, null, 2)}\n`
+}
+
+async function writeIterationSummary(config, summary) {
+  await writeTextFile(config.lastIterationSummaryFile, formatIterationSummary(summary))
+}
+
+function createIterationSummary({
+  iteration,
+  phase,
+  task,
+  repoChanged,
+  developerStatus,
+  testerStatus,
+  testerVerdict,
+  verificationStatus,
+  commitPlanFound,
+  gitFinalizeStatus,
+  visualStatus,
+  terminalReason,
+  sessionId,
+  developerModel,
+  testerModel,
+  visualModel,
+}) {
+  return {
+    iteration,
+    phase,
+    task,
+    repoChanged,
+    developerStatus,
+    testerStatus,
+    testerVerdict,
+    verificationStatus,
+    commitPlanFound,
+    gitFinalizeStatus,
+    visualStatus,
+    terminalReason,
+    sessionId,
+    developerModel,
+    testerModel,
+    visualModel,
+  }
 }
 
 function isInfrastructureVerificationFailure(output) {
@@ -192,6 +266,17 @@ async function runAgentInvocation({
     changedFilesCount: changedFiles.length,
     verificationStatus,
     retryCount,
+    role,
+    model: resolvedModel.model || '(PI default)',
+    toolCalls: result.toolCalls ?? 0,
+    toolErrors: result.toolErrors ?? 0,
+    messageUpdates: result.messageUpdates ?? 0,
+    stopReason: result.stopReason ?? '',
+    loopDetected: result.loopDetected === true,
+    loopSignature: result.loopSignature ?? '',
+    testerVerdict: '',
+    commitPlanFound: '',
+    terminalReason: result.terminalReason ?? '',
     notes: `${result.notes} role=${role} model=${resolvedModel.model || '(PI default)'}`.trim(),
   })
 
@@ -255,17 +340,43 @@ async function writeTesterFeedback(config, { iteration, phase, task, source, sta
 
 function parseCommitPlan(output) {
   const raw = String(output ?? '')
-  const messageMatch = raw.match(/^COMMIT_MESSAGE:\s*(.+)\s*$/im)
-  const filesBlockMatch = raw.match(/^COMMIT_FILES:\s*\n((?:\s*-\s+.+\n?)+)/im)
-  const files = filesBlockMatch
-    ? filesBlockMatch[1]
-      .split('\n')
-      .map((line) => /^\s*-\s+(.+?)\s*$/.exec(line)?.[1] ?? '')
-      .filter(Boolean)
-    : []
+  const lines = raw.split('\n')
+  const messageLine = lines.find((line) => /^\s*(?:[-*]\s+)?COMMIT_MESSAGE:\s*(.+?)\s*$/i.test(line))
+  const message = messageLine
+    ? messageLine.replace(/^\s*(?:[-*]\s+)?COMMIT_MESSAGE:\s*/i, '').trim()
+    : ''
+
+  const filesStartIndex = lines.findIndex((line) => /^\s*(?:[-*]\s+)?COMMIT_FILES:\s*$/i.test(line))
+  const files = []
+  if (filesStartIndex >= 0) {
+    for (const line of lines.slice(filesStartIndex + 1)) {
+      const trimmed = line.trim()
+      if (trimmed === '') {
+        if (files.length > 0) {
+          break
+        }
+        continue
+      }
+      if (/^VERDICT:/i.test(trimmed)) {
+        break
+      }
+      if (/^(?:[-*]\s+)?[A-Z_]+:\s*/.test(trimmed)) {
+        break
+      }
+
+      const normalized = trimmed
+        .replace(/^[-*]\s+/, '')
+        .replace(/^\d+\.\s+/, '')
+        .trim()
+
+      if (normalized !== '') {
+        files.push(normalized)
+      }
+    }
+  }
 
   return {
-    message: messageMatch?.[1]?.trim() ?? '',
+    message,
     files: [...new Set(files)],
   }
 }
@@ -289,6 +400,7 @@ async function runHarnessGitFinalize({
   const commitMessage = String(commitPlan.message ?? '').trim()
   let status = 'success'
   let notes = ''
+  let terminalReason = 'commit_created'
   const cleanupNewlyStagedFiles = (stagedBefore, stagedNow) => {
     const stagedBeforeSet = new Set(stagedBefore)
     const newlyStagedFiles = stagedNow.filter((file) => !stagedBeforeSet.has(file))
@@ -302,6 +414,7 @@ async function runHarnessGitFinalize({
   if (commitMessage === '' || requestedFiles.length === 0) {
     status = 'stalled'
     notes = 'commit_plan_missing=true'
+    terminalReason = 'awaiting_commit_plan'
   } else {
     const stagedBefore = listStagedFiles(config.cwd)
     const unrelatedStagedBefore = stagedBefore.filter((file) => !requestedFiles.includes(file))
@@ -309,11 +422,13 @@ async function runHarnessGitFinalize({
     if (unrelatedStagedBefore.length > 0) {
       status = 'blocked'
       notes = `commit_blocked_unrelated_staged_files=${unrelatedStagedBefore.join(',')}`
+      terminalReason = 'commit_finalize_blocked_unrelated_staged'
     } else {
       const filesToStage = requestedFiles.filter((file) => dirtyFiles.has(file))
       if (filesToStage.length === 0) {
         status = 'stalled'
         notes = 'commit_plan_no_dirty_files=true'
+        terminalReason = 'commit_plan_no_dirty_files'
       } else {
         try {
           stageFiles(config.cwd, filesToStage)
@@ -324,18 +439,22 @@ async function runHarnessGitFinalize({
             const cleanedFiles = cleanupNewlyStagedFiles(stagedBefore, stagedAfter)
             status = 'blocked'
             notes = `commit_blocked_unexpected_staged_files=${unexpectedStaged.join(',')} unstaged_cleanup=${cleanedFiles.join(',')}`.trim()
+            terminalReason = 'commit_finalize_blocked_unexpected_staged'
           } else if (!stagedAfter.some((file) => requestedFiles.includes(file))) {
             const cleanedFiles = cleanupNewlyStagedFiles(stagedBefore, stagedAfter)
             status = 'stalled'
             notes = `commit_plan_failed_to_stage=true unstaged_cleanup=${cleanedFiles.join(',')}`.trim()
+            terminalReason = 'commit_plan_failed_to_stage'
           } else {
             commitStagedFiles(config.cwd, commitMessage)
             notes = `commit_created=true files=${filesToStage.join(',')} message=${commitMessage}`
+            terminalReason = 'commit_created'
           }
         } catch (error) {
           const cleanedFiles = cleanupNewlyStagedFiles(stagedBefore, listStagedFiles(config.cwd))
           status = 'failed'
           notes = `commit_failed=${formatExecError(error)}${cleanedFiles.length > 0 ? ` unstaged_cleanup=${cleanedFiles.join(',')}` : ''}`
+          terminalReason = 'commit_finalize_failed'
         }
       }
     }
@@ -343,12 +462,16 @@ async function runHarnessGitFinalize({
 
   const afterSnapshot = getRepoSnapshot(config.cwd)
   const changedFiles = listChangedFiles(config.cwd)
+  const finalStatus = status === 'success' && beforeSnapshot.head === afterSnapshot.head ? 'stalled' : status
+  if (status === 'success' && finalStatus === 'stalled') {
+    terminalReason = 'commit_not_created'
+  }
 
   await recordEvent(config, {
     iteration,
     phase,
     kind: 'git_finalize',
-    status,
+    status: finalStatus,
     transport: 'local',
     sessionId: '',
     timedOut: false,
@@ -360,12 +483,24 @@ async function runHarnessGitFinalize({
     changedFilesCount: changedFiles.length,
     verificationStatus: 'not_run',
     retryCount: 0,
+    role: '',
+    model: '',
+    toolCalls: 0,
+    toolErrors: 0,
+    messageUpdates: 0,
+    stopReason: '',
+    loopDetected: false,
+    loopSignature: '',
+    testerVerdict: '',
+    commitPlanFound: requestedFiles.length > 0,
+    terminalReason,
     notes,
   })
 
   return {
-    status: status === 'success' && beforeSnapshot.head === afterSnapshot.head ? 'stalled' : status,
+    status: finalStatus,
     notes,
+    terminalReason,
   }
 }
 
@@ -399,6 +534,17 @@ async function runVerificationStep({ config, iteration, phase, kind }) {
     changedFilesCount: changedFiles.length,
     verificationStatus: verification.status,
     retryCount: 0,
+    role: '',
+    model: '',
+    toolCalls: 0,
+    toolErrors: 0,
+    messageUpdates: 0,
+    stopReason: '',
+    loopDetected: false,
+    loopSignature: '',
+    testerVerdict: '',
+    commitPlanFound: '',
+    terminalReason: `verification_${verification.status}`,
     notes: verificationNotes,
   })
 
@@ -452,6 +598,7 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
         result: {
           ...invocation.result,
           status: 'stalled',
+          terminalReason: 'no_repo_change',
           notes: `${invocation.result.notes} no_repo_change=true`,
         },
       }
@@ -462,9 +609,7 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
     }
 
     reason = shouldRetryForTimeout
-      ? invocation.result.notes.includes('loop_detected=')
-        ? `The previous turn got stuck repeating the same tool call (${invocation.result.notes}). Continue from the current repo state without rereading the same file over and over.`
-        : 'The previous turn stalled or timed out. Continue from the current repo state.'
+      ? buildRetryReason(invocation)
       : 'The previous turn ended without changing the repo. Continue and complete one coherent task.'
     prompt = buildSteeringPrompt(config, reason, {
       visualFeedback: await readLatestVisualFeedback(config),
@@ -614,22 +759,32 @@ async function runTesterTurn({
   const commitPlan = parseCommitPlan(invocation.result.output)
   const notesWithVerdict = `${invocation.result.notes} tester_verdict=${verdict} commit_plan_files=${commitPlan.files.length}`.trim()
   let testerStatus = invocation.result.status
+  let terminalReason = invocation.result.terminalReason || ''
 
   if (testerStatus === 'success' && verdict === 'FAIL') {
     testerStatus = 'failed'
+    terminalReason = 'tester_verdict_fail'
   } else if (testerStatus === 'success' && verdict === 'BLOCKED') {
     testerStatus = 'stalled'
+    terminalReason = 'tester_verdict_blocked'
   } else if (testerStatus === 'success' && verdict === 'UNKNOWN') {
     testerStatus = 'stalled'
+    terminalReason = 'tester_verdict_unknown'
+  } else if (testerStatus === 'success') {
+    terminalReason = commitPlan.message !== '' && commitPlan.files.length > 0
+      ? 'tester_pass_with_commit_plan'
+      : 'awaiting_commit_plan'
   }
 
   return {
     ...invocation,
     testerVerdict: verdict,
+    commitPlanFound: commitPlan.message !== '' && commitPlan.files.length > 0,
     commitPlan,
     result: {
       ...invocation.result,
       status: testerStatus,
+      terminalReason,
       notes: notesWithVerdict,
     },
   }
@@ -671,22 +826,30 @@ async function runTesterCommitTurn({
   const commitPlan = parseCommitPlan(invocation.result.output)
   const notesWithVerdict = `${invocation.result.notes} tester_verdict=${verdict} commit_plan_files=${commitPlan.files.length}`.trim()
   let testerStatus = invocation.result.status
+  let terminalReason = invocation.result.terminalReason || ''
 
   if (testerStatus === 'success' && verdict === 'BLOCKED') {
     testerStatus = 'stalled'
+    terminalReason = 'tester_commit_blocked'
   } else if (testerStatus === 'success' && verdict !== 'PASS') {
     testerStatus = 'stalled'
+    terminalReason = 'tester_commit_missing_pass'
   } else if (testerStatus === 'success' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
     testerStatus = 'stalled'
+    terminalReason = 'awaiting_commit_plan'
+  } else if (testerStatus === 'success') {
+    terminalReason = 'tester_commit_plan_ready'
   }
 
   return {
     ...invocation,
     testerVerdict: verdict,
+    commitPlanFound: commitPlan.message !== '' && commitPlan.files.length > 0,
     commitPlan,
     result: {
       ...invocation.result,
       status: testerStatus,
+      terminalReason,
       notes: notesWithVerdict,
     },
   }
@@ -715,6 +878,17 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
     changedFilesCount: changedFiles.length,
     verificationStatus: 'not_run',
     retryCount: 0,
+    role: '',
+    model: '',
+    toolCalls: 0,
+    toolErrors: 0,
+    messageUpdates: 0,
+    stopReason: '',
+    loopDetected: false,
+    loopSignature: '',
+    testerVerdict: '',
+    commitPlanFound: '',
+    terminalReason: `visual_capture_${capture.status}`,
     notes: capture.status === 'passed'
       ? `screenshots=${capture.screenshots.length} manifest=${capture.manifestPath}`
       : capture.output.trim().split('\n').slice(-8).join(' '),
@@ -791,6 +965,17 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
     changedFilesCount: changedFiles.length,
     verificationStatus: 'not_run',
     retryCount: 0,
+    role: 'visualReview',
+    model: visualReviewModel.model || '(unset)',
+    toolCalls: 0,
+    toolErrors: 0,
+    messageUpdates: 0,
+    stopReason: '',
+    loopDetected: false,
+    loopSignature: '',
+    testerVerdict: verdict,
+    commitPlanFound: '',
+    terminalReason: `visual_review_${status}`,
     notes: `verdict=${verdict} feedback=${config.visualFeedbackFile} role=visualReview model=${visualReviewModel.model || '(unset)'}`.trim(),
   })
 
@@ -805,6 +990,7 @@ async function runIteration({ config, state, iteration }) {
   const testerModelName = resolveRoleModelName(config, 'tester')
   const visualReviewRoleModel = resolveRoleModel(config, 'visualReview')
   const visualModelName = visualReviewRoleModel.model
+  const iterationStartSnapshot = getRepoSnapshot(config.cwd)
   const taskInfo = findFirstUncheckedTaskInfo(config.taskFile)
   if (!taskInfo.hasUncheckedTasks) {
     await appendLog(config.logFile, 'No unchecked tasks remain in TODOS.md')
@@ -822,9 +1008,16 @@ async function runIteration({ config, state, iteration }) {
       summary: {
         iteration,
         phase: taskInfo.phase || 'complete',
+        task: '',
+        repoChanged: false,
         developerStatus: 'complete',
         testerStatus: 'not_needed',
+        testerVerdict: 'NOT_RUN',
         verificationStatus: 'not_needed',
+        commitPlanFound: false,
+        gitFinalizeStatus: 'not_run',
+        visualStatus: 'not_run',
+        terminalReason: 'all_tasks_complete',
         notes: 'No unchecked tasks remain in TODOS.md.',
         sessionId: state.sessionId || '',
         outputPath: config.lastAgentOutputFile,
@@ -868,13 +1061,18 @@ async function runIteration({ config, state, iteration }) {
   let sessionFile = mainInvocation.result.sessionFile || startingSessionFile
   let developerStatus = mainInvocation.result.status
   let testerStatus = 'not_run'
+  let testerVerdict = 'NOT_RUN'
   let finalVerificationStatus = 'not_run'
   let visualStatus = 'not_run'
+  let commitPlanFound = false
+  let gitFinalizeStatus = 'not_run'
+  let terminalReason = mainInvocation.result.terminalReason || ''
   const noteParts = [`developer: ${mainInvocation.result.notes}`]
 
   if (mainInvocation.result.status === 'success' && config.transport === 'mock') {
     testerStatus = 'skipped'
     finalVerificationStatus = 'skipped'
+    terminalReason = 'mock_completed'
   } else if (mainInvocation.result.status === 'success') {
     const developerVerification = await runDeveloperVerificationAndFix({
       config,
@@ -889,6 +1087,13 @@ async function runIteration({ config, state, iteration }) {
     sessionFile = developerVerification.sessionFile
     developerStatus = developerVerification.developerStatus
     finalVerificationStatus = developerVerification.verificationStatus
+    if (developerStatus !== 'success') {
+      terminalReason = developerStatus === 'blocked'
+        ? 'verification_infrastructure_failure'
+        : 'developer_fix_incomplete'
+    } else if (finalVerificationStatus !== 'passed' && finalVerificationStatus !== 'not_run') {
+      terminalReason = `verification_${finalVerificationStatus}`
+    }
 
     if (developerVerification.feedbackSource && developerVerification.verificationOutput.trim() !== '') {
       await writeTesterFeedback(config, {
@@ -913,6 +1118,9 @@ async function runIteration({ config, state, iteration }) {
       })
 
       testerStatus = testerInvocation.result.status
+      testerVerdict = testerInvocation.testerVerdict
+      commitPlanFound = testerInvocation.commitPlanFound === true
+      terminalReason = testerInvocation.result.terminalReason || terminalReason
       noteParts.push(`tester: ${testerInvocation.result.notes}`)
       await writeTesterFeedback(config, {
         iteration,
@@ -937,6 +1145,9 @@ async function runIteration({ config, state, iteration }) {
         })
 
         testerStatus = testerCommitInvocation.result.status
+        testerVerdict = testerCommitInvocation.testerVerdict
+        commitPlanFound = testerCommitInvocation.commitPlanFound === true
+        terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
         noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
         await writeTesterFeedback(config, {
           iteration,
@@ -957,10 +1168,15 @@ async function runIteration({ config, state, iteration }) {
           commitPlan,
         })
         testerStatus = gitFinalize.status
+        gitFinalizeStatus = gitFinalize.status
+        terminalReason = gitFinalize.terminalReason || terminalReason
         noteParts.push(`git_finalize: ${gitFinalize.notes}`)
       }
     } else {
       testerStatus = 'skipped'
+      if (terminalReason === '') {
+        terminalReason = 'tester_skipped_after_verification'
+      }
     }
 
     if (testerStatus === 'failed') {
@@ -976,6 +1192,7 @@ async function runIteration({ config, state, iteration }) {
       sessionId = fixInvocation.result.sessionId || sessionId
       sessionFile = fixInvocation.result.sessionFile || sessionFile
       developerStatus = fixInvocation.result.status
+      terminalReason = fixInvocation.result.terminalReason || 'developer_fix_incomplete'
       noteParts.push(`developer_fix: ${fixInvocation.result.notes}`)
 
       if (fixInvocation.result.status === 'success') {
@@ -990,6 +1207,9 @@ async function runIteration({ config, state, iteration }) {
         })
 
         testerStatus = testerRecheck.result.status
+        testerVerdict = testerRecheck.testerVerdict
+        commitPlanFound = testerRecheck.commitPlanFound === true
+        terminalReason = testerRecheck.result.terminalReason || terminalReason
         noteParts.push(`tester_recheck: ${testerRecheck.result.notes}`)
         await writeTesterFeedback(config, {
           iteration,
@@ -1014,6 +1234,9 @@ async function runIteration({ config, state, iteration }) {
           })
 
           testerStatus = testerCommitInvocation.result.status
+          testerVerdict = testerCommitInvocation.testerVerdict
+          commitPlanFound = testerCommitInvocation.commitPlanFound === true
+          terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
           noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
           await writeTesterFeedback(config, {
             iteration,
@@ -1034,6 +1257,8 @@ async function runIteration({ config, state, iteration }) {
             commitPlan,
           })
           testerStatus = gitFinalize.status
+          gitFinalizeStatus = gitFinalize.status
+          terminalReason = gitFinalize.terminalReason || terminalReason
           noteParts.push(`git_finalize: ${gitFinalize.notes}`)
         }
 
@@ -1046,12 +1271,18 @@ async function runIteration({ config, state, iteration }) {
           })
 
           finalVerificationStatus = reverify.status
+          if (finalVerificationStatus !== 'passed') {
+            terminalReason = `verification_${finalVerificationStatus}`
+          }
         }
       }
     }
   } else {
     testerStatus = 'not_run'
     finalVerificationStatus = 'not_run'
+    if (terminalReason === '') {
+      terminalReason = 'developer_turn_incomplete'
+    }
   }
 
   const workflowStatus = deriveWorkflowStatus({
@@ -1084,6 +1315,9 @@ async function runIteration({ config, state, iteration }) {
       changedFiles: listChangedFiles(config.cwd),
     })
     visualStatus = visualReview.status
+    terminalReason = visualReview.status === 'passed'
+      ? terminalReason
+      : `visual_review_${visualReview.status}`
     noteParts.push(`visual: ${visualReview.notes}`)
   } else if (config.visualReviewEnabled) {
     visualStatus = 'skipped'
@@ -1093,6 +1327,22 @@ async function runIteration({ config, state, iteration }) {
     workflowStatus,
     visualStatus,
   })
+
+  if (finalStatus === 'success') {
+    terminalReason = 'completed_phase_step'
+  } else if (terminalReason === '') {
+    terminalReason = testerStatus === 'failed'
+      ? 'tester_verdict_fail'
+      : testerStatus === 'stalled'
+        ? 'iteration_stalled'
+        : developerStatus === 'blocked'
+          ? 'developer_blocked'
+          : developerStatus === 'failed'
+            ? 'developer_failed'
+            : finalVerificationStatus !== 'not_run'
+              ? `verification_${finalVerificationStatus}`
+              : 'workflow_incomplete'
+  }
 
   const successfulIterations = (
     finalStatus === 'success'
@@ -1126,18 +1376,74 @@ async function runIteration({ config, state, iteration }) {
 
   await appendLog(
     config.logFile,
-    `Finished iteration ${iteration} with status=${finalStatus} verification=${finalVerificationStatus}`
+    `Finished iteration ${iteration} with status=${finalStatus} verification=${finalVerificationStatus} tester_verdict=${testerVerdict} commit_plan_found=${commitPlanFound} terminal_reason=${terminalReason}`
   )
+
+  const iterationEndSnapshot = getRepoSnapshot(config.cwd)
+  const iterationSummary = createIterationSummary({
+    iteration,
+    phase,
+    task,
+    repoChanged: didRepoChange(iterationStartSnapshot, iterationEndSnapshot),
+    developerStatus,
+    testerStatus,
+    testerVerdict,
+    verificationStatus: finalVerificationStatus,
+    commitPlanFound,
+    gitFinalizeStatus,
+    visualStatus,
+    terminalReason,
+    sessionId,
+    developerModel: developerModelName,
+    testerModel: testerModelName,
+    visualModel: visualModelName,
+  })
+
+  await recordEvent(config, {
+    iteration,
+    phase,
+    kind: 'iteration_summary',
+    status: finalStatus,
+    transport: config.transport,
+    sessionId,
+    timedOut: false,
+    exitCode: finalStatus === 'success' ? 0 : 1,
+    durationSeconds: 0,
+    commitBefore: iterationStartSnapshot.head,
+    commitAfter: iterationEndSnapshot.head,
+    repoChanged: iterationSummary.repoChanged,
+    changedFilesCount: listChangedFiles(config.cwd).length,
+    verificationStatus: finalVerificationStatus,
+    retryCount: 0,
+    role: '',
+    model: '',
+    toolCalls: 0,
+    toolErrors: 0,
+    messageUpdates: 0,
+    stopReason: '',
+    loopDetected: false,
+    loopSignature: '',
+    testerVerdict,
+    commitPlanFound,
+    terminalReason,
+    notes: noteParts.join(' | '),
+  })
 
   return {
     stateUpdate: nextState,
     summary: {
       iteration,
       phase,
+      task,
+      repoChanged: iterationSummary.repoChanged,
       developerStatus,
       testerStatus,
+      testerVerdict,
       verificationStatus: finalVerificationStatus,
+      commitPlanFound,
+      gitFinalizeStatus,
       visualStatus,
+      terminalReason,
       notes: noteParts.join(' | '),
       sessionId,
       outputPath: config.lastAgentOutputFile,
@@ -1148,6 +1454,7 @@ async function runIteration({ config, state, iteration }) {
       testerModel: testerModelName,
       visualModel: visualModelName,
     },
+    iterationSummary,
     shouldStop: false,
   }
 }
@@ -1167,6 +1474,7 @@ async function main() {
   while (!stopRequested) {
     const iteration = state.iteration + 1
     const result = await runIteration({ config, state, iteration })
+    await writeIterationSummary(config, result.iterationSummary ?? result.summary)
     state = result.stateUpdate
     await writeState(config.stateFile, state)
     printTerminalSummary(config, result.summary)

@@ -228,6 +228,7 @@ export function loadConfig(mode = 'once') {
     lastVerificationOutputFile: resolveFromCwd(cwd, 'PI_LAST_VERIFICATION_OUTPUT_FILE', file.lastVerificationOutputFile, '.pi-last-verification.txt'),
     changedFilesFile: resolveFromCwd(cwd, 'PI_CHANGED_FILES_FILE', file.changedFilesFile, '.pi-changed-files.txt'),
     lastPromptFile: resolveFromCwd(cwd, 'PI_LAST_PROMPT_FILE', file.lastPromptFile, '.pi-last-prompt.txt'),
+    lastIterationSummaryFile: resolveFromCwd(cwd, 'PI_LAST_ITERATION_SUMMARY_FILE', file.lastIterationSummaryFile, '.pi-last-iteration.json'),
     piRuntimeDir: resolveFromCwd(cwd, 'PI_RUNTIME_DIR', file.piRuntimeDir, '.pi-runtime'),
     piCli: readString('PI_CLI', file.piCli, 'pi'),
     piModel,

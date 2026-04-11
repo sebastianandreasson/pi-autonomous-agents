@@ -21,6 +21,7 @@ export function collectHistoryTargets(config) {
     config.lastVerificationOutputFile,
     config.changedFilesFile,
     config.lastPromptFile,
+    config.lastIterationSummaryFile,
     config.piRuntimeDir,
     config.visualFeedbackFile,
     config.testerFeedbackFile,

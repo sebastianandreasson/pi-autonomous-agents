@@ -180,6 +180,7 @@ The harness should fail fast if:
 - a configured provider does not serve the configured model id
 
 For prompt debugging, inspect `.pi-last-prompt.txt` after a run. It contains the exact assembled prompt that was sent for the active role.
+For flow debugging, inspect `.pi-last-iteration.json` after a run. It summarizes the selected task, repo-change outcome, tester verdict, commit-plan state, and terminal reason.
 
 ## Agent Rules
 
@@ -188,6 +189,7 @@ For prompt debugging, inspect `.pi-last-prompt.txt` after a run. It contains the
 - Do not invent fake test commands or model endpoints.
 - Do not enable visual review unless the repo actually has a usable capture command and model config.
 - Keep changes minimal and local to harness setup.
+- Prefer very small, implementation-shaped TODO items for local models. Broad tasks tend to create long turns, retries, and weak tester behavior.
 
 ## What To Report Back
 

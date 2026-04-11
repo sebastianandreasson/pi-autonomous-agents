@@ -92,6 +92,7 @@ PI_CONFIG_FILE=pi.config.json pi-harness clear-history
 The command removes configured harness history/runtime files and verifies that no configured history paths remain afterward.
 
 For prompt debugging, the harness also writes the exact assembled prompt for the current role to `.pi-last-prompt.txt` by default.
+For flow debugging, it also writes a machine-readable `.pi-last-iteration.json` summary with the selected task, tester verdict, commit-plan state, and terminal reason.
 
 ## Generic Contracts
 
@@ -105,6 +106,8 @@ For prompt debugging, the harness also writes the exact assembled prompt for the
 - `testerFeedbackFile`: latest tester-review handoff
 
 For unattended loops, keep `testCommand` fast and bounded, such as a smoke suite. Long real-time Playwright happy-path specs belong in an explicit nightly or post-run lane, not the default developer/tester inner loop.
+
+Keep TODO items extremely small and implementation-shaped when using weaker local models. Broad tasks tend to produce much longer turns, more retries, and more tester drift than narrow one-step tasks.
 
 The adapter heartbeat is PI-RPC-event based. Streaming shell output does not count as progress on its own, so long-running tools should rely on the tool-aware watchdog thresholds rather than terminal streaming.
 

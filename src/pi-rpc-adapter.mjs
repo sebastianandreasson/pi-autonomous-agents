@@ -121,6 +121,7 @@ async function run() {
   const pending = new Map()
   let requestCounter = 0
   const streamTerminal = request.streamTerminal === true
+  const requestedModel = typeof request.model === 'string' ? request.model : ''
   const loopRepeatThreshold = Number.isFinite(Number(request.loopRepeatThreshold))
     ? Number(request.loopRepeatThreshold)
     : 12
@@ -416,6 +417,9 @@ async function run() {
     await waitForAgentEnd()
 
     if (heartbeatTimedOut) {
+      const toolCalls = events.filter((event) => event.type === 'tool_execution_start').length
+      const toolErrors = events.filter((event) => event.type === 'tool_execution_end' && event.isError).length
+      const messageUpdates = events.filter((event) => event.type === 'message_update').length
       console.log(JSON.stringify({
         sessionId: request.sessionId ?? '',
         sessionFile: request.sessionFile ?? '',
@@ -438,6 +442,15 @@ async function run() {
           continueAccepted ? 'continue_accepted=true' : '',
           continueRejected ? 'continue_rejected=true' : '',
         ].join(' '),
+        role: '',
+        model: requestedModel,
+        toolCalls,
+        toolErrors,
+        messageUpdates,
+        stopReason: '',
+        loopDetected: false,
+        loopSignature: '',
+        terminalReason: 'heartbeat_timeout',
       }))
       return
     }
@@ -464,6 +477,15 @@ async function run() {
       : assistantError !== '' || (assistantText === '' && toolCalls === 0 && messageUpdates === 0)
         ? 'failed'
         : 'success'
+    const terminalReason = loopDetected
+      ? 'loop_detected'
+      : assistantError !== ''
+        ? 'assistant_error'
+        : assistantStopReason === 'length'
+          ? 'assistant_stop_length'
+          : status === 'failed'
+            ? 'empty_agent_turn'
+            : 'agent_completed'
     const notes = [
       `PI session ${state.data.sessionId}`,
       `pi_pid=${child.pid ?? 'unknown'}`,
@@ -494,6 +516,15 @@ async function run() {
       status,
       output,
       notes,
+      role: '',
+      model: requestedModel,
+      toolCalls,
+      toolErrors,
+      messageUpdates,
+      stopReason: assistantStopReason,
+      loopDetected,
+      loopSignature,
+      terminalReason,
     }))
   } finally {
     if (heartbeatInterval) {

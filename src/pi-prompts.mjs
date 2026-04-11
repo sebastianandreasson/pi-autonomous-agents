@@ -154,6 +154,7 @@ Harness rules:
 - Start by checking git status so you know which files are already dirty.
 - Do not paper over product bugs by weakening tests.
 - Keep changes minimal and focused on the failing behavior.
+- Do not perform speculative cleanup or unrelated refactors in this pass.
 - Do not create the final commit during the developer fix pass.
 ${staleEditRecoveryRules()}
 
@@ -176,6 +177,7 @@ Rules:
 - Do not paper over product bugs by weakening tests.
 - Prefer fixing product code over rewriting tests.
 - Update tests only when the tester exposed a real gap in coverage or testability.
+- Do not perform speculative cleanup or unrelated refactors in this pass.
 - Do not create docs, issue templates, or unrelated scaffolding.
 - Do not edit lockfiles or other generated files.
 - If dependencies must change, edit package.json only, then stop.
@@ -285,9 +287,11 @@ Harness rules:
 - Follow the repo-local tester instructions for what to verify and which commands to run.
 - If blocked by tooling or environment, state the blocker clearly.
 - If you find a real product bug or incomplete functionality, do not hide it with brittle tests.
+- If you cannot finish a reliable review in one pass, return VERDICT: BLOCKED instead of continuing analysis indefinitely.
 ${staleEditRecoveryRules()}
 - If your verdict is PASS, do not run git add or git commit yourself. Provide a commit plan for the harness to execute.
 - The commit plan must include only the files related to this task. If the working tree is too messy to isolate safely, use VERDICT: BLOCKED instead of guessing.
+- If you can produce a PASS, include the commit plan in the same response. Avoid making the harness ask for a second commit-only pass.
 - Stop after one coherent tester pass.${visualCaptureNote}
 
 Before the verdict line, include a short section in plain text with:
@@ -300,6 +304,8 @@ If and only if your verdict is PASS, also include exactly this commit plan block
 - COMMIT_FILES:
 - path/to/file-one
 - path/to/file-two
+
+Do not add commentary on the same lines as COMMIT_MESSAGE or COMMIT_FILES. Put only the message value after COMMIT_MESSAGE:, then one file path per line under COMMIT_FILES:.
 
 Before stopping, end your final response with exactly one verdict line:
 - VERDICT: PASS
@@ -341,11 +347,13 @@ ${visualCaptureNote}
 	- If you find a real product bug or incomplete functionality, do not hide it with brittle tests.
 	- If blocked by tooling or environment, state the blocker clearly.
 	- Trust tool results over your own guesses. If a read tool shows file contents, use that exact output instead of arguing with it.
+	- If you cannot finish a reliable review in one pass, return VERDICT: BLOCKED instead of continuing analysis indefinitely.
 ${indentBlock(staleEditRecoveryRules(), '\t')}
 	- Treat "the player cannot start, continue, select, buy, unlock, or exit correctly" as a FAIL even if the code compiles.
 	- Before PASS, identify at least one concrete player-visible success path you exercised and one thing you checked for regressions.
 	- If your verdict is PASS and the verification command succeeded, do not run git add or git commit yourself. Instead, provide a commit plan for the harness to execute.
 	- The commit plan must include only the files related to this task. If the working tree is too messy to isolate safely, use VERDICT: BLOCKED instead of guessing.
+	- If you can produce a PASS, include the commit plan in the same response. Avoid making the harness ask for a second commit-only pass.
 	- Use a concise commit message in the format <type>(<scope>): <summary> when possible.
 	- Stop after one coherent tester pass.
 
@@ -359,6 +367,8 @@ ${indentBlock(staleEditRecoveryRules(), '\t')}
 	- COMMIT_FILES:
 	- path/to/file-one
 	- path/to/file-two
+
+	Do not add commentary on the same lines as COMMIT_MESSAGE or COMMIT_FILES. Put only the message value after COMMIT_MESSAGE:, then one file path per line under COMMIT_FILES:.
 
 	Before stopping, end your final response with exactly one verdict line:
 	- VERDICT: PASS
@@ -418,6 +428,8 @@ If you can isolate the correct commit, include exactly this block before the ver
 - COMMIT_FILES:
 - path/to/file-one
 - path/to/file-two
+
+Do not add commentary on the same lines as COMMIT_MESSAGE or COMMIT_FILES. Put only the message value after COMMIT_MESSAGE:, then one file path per line under COMMIT_FILES:.
 
 Before stopping, end your final response with exactly one verdict line:
 - VERDICT: PASS

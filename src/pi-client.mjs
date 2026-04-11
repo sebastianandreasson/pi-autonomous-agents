@@ -18,6 +18,7 @@ function formatLastAgentOutput(response) {
     `status: ${String(response.status ?? '')}`,
     `sessionId: ${String(response.sessionId ?? '')}`,
     `sessionFile: ${String(response.sessionFile ?? '')}`,
+    `terminalReason: ${String(response.terminalReason ?? '')}`,
     `notes: ${String(response.notes ?? '').trim()}`,
   ]
 
@@ -58,6 +59,15 @@ async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
     durationSeconds: 0,
     output,
     notes: 'Mock transport completed without repo edits.',
+    role: '',
+    model: '',
+    toolCalls: 0,
+    toolErrors: 0,
+    messageUpdates: 0,
+    stopReason: '',
+    loopDetected: false,
+    loopSignature: '',
+    terminalReason: 'mock_completed',
   }
 }
 
@@ -142,6 +152,15 @@ async function runAdapterTurn({ config, model, sessionId, sessionFile, prompt, i
       durationSeconds: result.durationSeconds,
       output: result.combinedOutput,
       notes: 'Adapter process exceeded the configured timeout.',
+      role: '',
+      model: model ?? config.piModel,
+      toolCalls: 0,
+      toolErrors: 0,
+      messageUpdates: 0,
+      stopReason: '',
+      loopDetected: false,
+      loopSignature: '',
+      terminalReason: 'agent_timeout',
     }
   }
 
@@ -157,6 +176,15 @@ async function runAdapterTurn({ config, model, sessionId, sessionFile, prompt, i
       durationSeconds: result.durationSeconds,
       output: result.combinedOutput,
       notes: truncateForNotes(result.combinedOutput) || 'Adapter exited non-zero.',
+      role: '',
+      model: model ?? config.piModel,
+      toolCalls: 0,
+      toolErrors: 0,
+      messageUpdates: 0,
+      stopReason: '',
+      loopDetected: false,
+      loopSignature: '',
+      terminalReason: 'adapter_failed',
     }
   }
 
@@ -179,6 +207,15 @@ async function runAdapterTurn({ config, model, sessionId, sessionFile, prompt, i
     durationSeconds: result.durationSeconds,
     output,
     notes,
+    role: String(response.role ?? ''),
+    model: String(response.model ?? model ?? config.piModel ?? ''),
+    toolCalls: Number.isFinite(Number(response.toolCalls)) ? Number(response.toolCalls) : 0,
+    toolErrors: Number.isFinite(Number(response.toolErrors)) ? Number(response.toolErrors) : 0,
+    messageUpdates: Number.isFinite(Number(response.messageUpdates)) ? Number(response.messageUpdates) : 0,
+    stopReason: String(response.stopReason ?? ''),
+    loopDetected: response.loopDetected === true,
+    loopSignature: String(response.loopSignature ?? ''),
+    terminalReason: String(response.terminalReason ?? ''),
   }
 }
 

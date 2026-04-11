@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 
-const CSV_HEADER = 'timestamp,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,notes\n'
+const CSV_HEADER = 'timestamp,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,role,model,tool_calls,tool_errors,message_updates,stop_reason,loop_detected,loop_signature,tester_verdict,commit_plan_found,terminal_reason,notes\n'
 
 function csvEscape(value) {
   const text = String(value ?? '')
@@ -12,6 +12,7 @@ export async function ensureTelemetryFiles(config) {
   await fs.writeFile(config.lastVerificationOutputFile, '', 'utf8')
   await fs.writeFile(config.changedFilesFile, '', 'utf8')
   await fs.writeFile(config.lastPromptFile, '', 'utf8')
+  await fs.writeFile(config.lastIterationSummaryFile, '', 'utf8')
 
   await fs.appendFile(config.logFile, '', 'utf8')
   await fs.appendFile(config.telemetryJsonl, '', 'utf8')
@@ -44,6 +45,17 @@ export async function appendTelemetry(config, event) {
     event.changedFilesCount,
     event.verificationStatus,
     event.retryCount,
+    event.role,
+    event.model,
+    event.toolCalls,
+    event.toolErrors,
+    event.messageUpdates,
+    event.stopReason,
+    event.loopDetected,
+    event.loopSignature,
+    event.testerVerdict,
+    event.commitPlanFound,
+    event.terminalReason,
     event.notes,
   ].map(csvEscape).join(',')
 
