@@ -13,6 +13,8 @@ const baseConfig = {
   taskFile: path.join(cwd, 'TODOS.md'),
   developerInstructionsFile: path.join(cwd, 'pi', 'DEVELOPER.md'),
   testerInstructionsFile: path.join(cwd, 'pi', 'TESTER.md'),
+  usingBundledDeveloperInstructions: false,
+  usingBundledTesterInstructions: false,
   testCommand: 'pnpm test:e2e:smoke',
   visualReviewEnabled: false,
   visualCaptureCommand: '',
@@ -31,4 +33,16 @@ test('tester prompt uses repo-relative instruction paths', () => {
     developerNotes: '',
   })
   assert.match(prompt, /Read TODOS\.md and pi\/TESTER\.md\./)
+})
+
+test('custom tester instructions stay authoritative over package defaults', () => {
+  const prompt = buildTesterPrompt(baseConfig, {
+    phase: 'Phase 1',
+    task: 'Task',
+    changedFiles: [],
+    developerNotes: '',
+  })
+
+  assert.match(prompt, /Repo-local instructions in pi\/TESTER\.md are the primary role contract\./)
+  assert.doesNotMatch(prompt, /Run the repo verification command yourself:/)
 })

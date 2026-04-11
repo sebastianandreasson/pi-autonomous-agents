@@ -179,6 +179,8 @@ The harness should fail fast if:
 - a configured provider endpoint is unreachable
 - a configured provider does not serve the configured model id
 
+For prompt debugging, inspect `.pi-last-prompt.txt` after a run. It contains the exact assembled prompt that was sent for the active role.
+
 ## Agent Rules
 
 - Reuse existing repo conventions where possible.

@@ -87,6 +87,10 @@ function printTerminalSummary(config, summary) {
     lines.push(`[PI supervisor] last_output=${summary.outputPath}`)
   }
 
+  if (config.lastPromptFile) {
+    lines.push(`[PI supervisor] last_prompt=${toDisplayPath(config, config.lastPromptFile)}`)
+  }
+
   process.stderr.write(`${lines.join('\n')}\n`)
 }
 
@@ -142,6 +146,16 @@ async function runAgentInvocation({
 }) {
   const beforeSnapshot = getRepoSnapshot(config.cwd)
   const resolvedModel = resolveRoleModel(config, role)
+  const promptSnapshot = [
+    `role=${role}`,
+    `kind=${kind}`,
+    `phase=${phase}`,
+    `reason=${reason}`,
+    `model=${resolvedModel.model || '(PI default)'}`,
+    '',
+    prompt,
+  ].join('\n')
+  await writeTextFile(config.lastPromptFile, `${promptSnapshot}\n`)
   const result = await runAgentTurn({
     config,
     model: resolvedModel.model,

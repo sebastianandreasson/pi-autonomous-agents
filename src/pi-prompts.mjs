@@ -54,14 +54,50 @@ function staleEditRecoveryRules() {
   ].join('\n')
 }
 
+function repoInstructionsAuthorityLine(config, instructionsFile, usesBundledInstructions) {
+  if (usesBundledInstructions) {
+    return ''
+  }
+
+  return `Repo-local instructions in ${displayPath(config, instructionsFile)} are the primary role contract. Follow them over package defaults when they differ.\n`
+}
+
 export function buildMainPrompt(config, options = {}) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.developerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
+  const authorityLine = repoInstructionsAuthorityLine(
+    config,
+    config.developerInstructionsFile,
+    config.usingBundledDeveloperInstructions,
+  )
+
+  if (!config.usingBundledDeveloperInstructions) {
+    return `Read ${taskFile} and ${instructionsFile}.
+${authorityLine}${visualFeedbackSection}
+${testerFeedbackSection}
+
+Work only on the current phase.
+Select the first unchecked actionable checkbox in phase order.
+Complete one coherent task, or at most 2 tightly related unchecked tasks if they are naturally done together.
+
+Harness rules:
+- Start by checking git status so you know whether unrelated changes already exist.
+- Update code, config, and docs only as needed for the selected task.
+- Tick only the checkbox items that are actually completed.
+- If blocked, add a brief note directly under the relevant task in ${taskFile} explaining the blocker, then stop.
+- Do not create the final commit during the developer pass.
+${staleEditRecoveryRules()}
+
+Before stopping:
+- Tick completed checkbox items in ${taskFile}.
+- Keep changes scoped to one coherent step.
+- Stop after finishing that step.`
+  }
 
   return `Read ${taskFile} and ${instructionsFile}.
-${visualFeedbackSection}
+${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 
 Work only on the current phase.
@@ -98,9 +134,36 @@ export function buildFixPrompt(config, recentVerificationOutput, options = {}) {
   const instructionsFile = displayPath(config, config.developerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
+  const authorityLine = repoInstructionsAuthorityLine(
+    config,
+    config.developerInstructionsFile,
+    config.usingBundledDeveloperInstructions,
+  )
+
+  if (!config.usingBundledDeveloperInstructions) {
+    return `Read ${taskFile} and ${instructionsFile}.
+${authorityLine}${visualFeedbackSection}
+${testerFeedbackSection}
+
+The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
+
+Recent tester findings:
+${recentVerificationOutput}
+
+Harness rules:
+- Start by checking git status so you know which files are already dirty.
+- Do not paper over product bugs by weakening tests.
+- Keep changes minimal and focused on the failing behavior.
+- Do not create the final commit during the developer fix pass.
+${staleEditRecoveryRules()}
+
+Before stopping:
+- Tick any checkbox in ${taskFile} only if it is now actually complete.
+- Stop after one coherent fix.`
+  }
 
   return `Read ${taskFile} and ${instructionsFile}.
-${visualFeedbackSection}
+${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 
 The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
@@ -130,11 +193,36 @@ Before stopping:
 
 export function buildSteeringPrompt(config, reason, options = {}) {
   const taskFile = displayPath(config, config.taskFile)
+  const instructionsFile = displayPath(config, config.developerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(options.visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(options.testerFeedback)
+  const authorityLine = repoInstructionsAuthorityLine(
+    config,
+    config.developerInstructionsFile,
+    config.usingBundledDeveloperInstructions,
+  )
+
+  if (!config.usingBundledDeveloperInstructions) {
+    return `Continue from the current repo state.
+Read ${taskFile} and ${instructionsFile}.
+${authorityLine}${visualFeedbackSection}
+${testerFeedbackSection}
+
+Reason for this follow-up: ${reason}
+
+Select the first unchecked actionable checkbox in the current phase, complete one coherent task, tick completed items, run any repo-local verification required by your role instructions, and stop.
+
+Additional harness guardrails:
+- Start by checking git status.
+- Do not repeat the same tool call over and over.
+- If you already read a file, use that context instead of rereading it unless something changed.
+- If an edit fails once, reread the file before retrying. Do not repeat the same exact edit attempt.
+- If you are stuck, make the smallest decisive next action or stop and state the blocker.`
+  }
 
   return `Continue from the current repo state.
-${visualFeedbackSection}
+Read ${taskFile} and ${instructionsFile}.
+${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 
 Reason for this follow-up: ${reason}
@@ -169,9 +257,58 @@ export function buildTesterPrompt(config, {
   const visualCaptureNote = config.visualReviewEnabled
     ? `\n- Maintain the screenshot capture flow used by the harness (${config.visualCaptureCommand || 'PI_VISUAL_CAPTURE_CMD'}) so current visual artifacts and manifest are produced for visual review.`
     : ''
+  const authorityLine = repoInstructionsAuthorityLine(
+    config,
+    config.testerInstructionsFile,
+    config.usingBundledTesterInstructions,
+  )
+
+  if (!config.usingBundledTesterInstructions) {
+    return `Read ${taskFile} and ${instructionsFile}.
+${authorityLine}${visualFeedbackSection}
+${testerFeedbackSection}
+
+You are the TESTER role. You are reviewing the most recent developer work from an independent quality and functionality perspective.
+
+Current phase: ${phase}
+Current task: ${task}
+Reason for this tester pass: ${reason}
+
+Developer notes:
+${developerNotes || '(none provided)'}
+
+Files changed by the developer:
+${changedFilesSection}
+
+Harness rules:
+- Start by checking git status so you can separate this task from unrelated dirty files.
+- Follow the repo-local tester instructions for what to verify and which commands to run.
+- If blocked by tooling or environment, state the blocker clearly.
+- If you find a real product bug or incomplete functionality, do not hide it with brittle tests.
+${staleEditRecoveryRules()}
+- If your verdict is PASS, do not run git add or git commit yourself. Provide a commit plan for the harness to execute.
+- The commit plan must include only the files related to this task. If the working tree is too messy to isolate safely, use VERDICT: BLOCKED instead of guessing.
+- Stop after one coherent tester pass.${visualCaptureNote}
+
+Before the verdict line, include a short section in plain text with:
+- Observed flow:
+- Player-facing result:
+- Regression check:
+
+If and only if your verdict is PASS, also include exactly this commit plan block before the verdict line:
+- COMMIT_MESSAGE: <one-line commit message>
+- COMMIT_FILES:
+- path/to/file-one
+- path/to/file-two
+
+Before stopping, end your final response with exactly one verdict line:
+- VERDICT: PASS
+- VERDICT: FAIL
+- VERDICT: BLOCKED`
+  }
 
   return `Read ${taskFile} and ${instructionsFile}.
-${visualFeedbackSection}
+${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 
 You are the TESTER role. You are reviewing the most recent developer work from an independent quality and functionality perspective.
@@ -242,12 +379,17 @@ export function buildCommitPrompt(config, {
   const instructionsFile = displayPath(config, config.testerInstructionsFile)
   const visualFeedbackSection = formatVisualFeedback(visualFeedback)
   const testerFeedbackSection = formatTesterFeedback(testerFeedback)
+  const authorityLine = repoInstructionsAuthorityLine(
+    config,
+    config.testerInstructionsFile,
+    config.usingBundledTesterInstructions,
+  )
   const changedFilesSection = changedFiles.length > 0
     ? changedFiles.map((file) => `- ${file}`).join('\n')
     : '- No changed files were detected. Inspect git status before deciding whether a commit is possible.'
 
   return `Read ${taskFile} and ${instructionsFile}.
-${visualFeedbackSection}
+${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 
 You are the TESTER role. The implementation already passed functional review, but the final commit was not created.

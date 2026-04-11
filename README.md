@@ -91,6 +91,8 @@ PI_CONFIG_FILE=pi.config.json pi-harness clear-history
 
 The command removes configured harness history/runtime files and verifies that no configured history paths remain afterward.
 
+For prompt debugging, the harness also writes the exact assembled prompt for the current role to `.pi-last-prompt.txt` by default.
+
 ## Generic Contracts
 
 - `taskFile`: usually `TODOS.md`

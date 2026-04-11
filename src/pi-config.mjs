@@ -181,12 +181,30 @@ export function loadConfig(mode = 'once') {
   const repoConfig = readRepoConfig(cwd)
   const file = repoConfig.values
   const bundledAdapterCommand = 'pi-harness adapter'
+  const bundledDeveloperInstructionsFile = path.join(packageRoot, 'templates', 'DEVELOPER.md')
+  const bundledTesterInstructionsFile = path.join(packageRoot, 'templates', 'TESTER.md')
   const modelProfiles = readObject('models', file.models, {})
   const roleModels = normalizeRoleModels(file.roleModels)
   const piModel = readString('PI_MODEL', file.piModel, '')
   const visualReviewModel = readString('PI_VISUAL_REVIEW_MODEL', file.visualReviewModel, '')
   const resolvedPiModel = resolveModelProfile(modelProfiles, piModel)
   const resolvedVisualReviewModel = resolveModelProfile(modelProfiles, visualReviewModel)
+  const developerInstructionsFile = resolveInstructionsFile(
+    cwd,
+    'PI_DEVELOPER_INSTRUCTIONS_FILE',
+    file.developerInstructionsFile,
+    hasValue(file.instructionsFile)
+      ? String(file.instructionsFile)
+      : bundledDeveloperInstructionsFile
+  )
+  const testerInstructionsFile = resolveInstructionsFile(
+    cwd,
+    'PI_TESTER_INSTRUCTIONS_FILE',
+    file.testerInstructionsFile,
+    hasValue(file.instructionsFile)
+      ? String(file.instructionsFile)
+      : bundledTesterInstructionsFile
+  )
 
   return {
     cwd,
@@ -196,23 +214,11 @@ export function loadConfig(mode = 'once') {
     agentName: readString('PI_AGENT_NAME', file.agentName, 'PI'),
     adapterCommand: readString('PI_ADAPTER_COMMAND', file.adapterCommand, bundledAdapterCommand),
     taskFile: resolveFromCwd(cwd, 'PI_TASK_FILE', file.taskFile, 'TODOS.md'),
-    instructionsFile: resolveInstructionsFile(cwd, 'PI_INSTRUCTIONS_FILE', file.instructionsFile, path.join(packageRoot, 'templates', 'DEVELOPER.md')),
-    developerInstructionsFile: resolveInstructionsFile(
-      cwd,
-      'PI_DEVELOPER_INSTRUCTIONS_FILE',
-      file.developerInstructionsFile,
-      hasValue(file.instructionsFile)
-        ? String(file.instructionsFile)
-        : path.join(packageRoot, 'templates', 'DEVELOPER.md')
-    ),
-    testerInstructionsFile: resolveInstructionsFile(
-      cwd,
-      'PI_TESTER_INSTRUCTIONS_FILE',
-      file.testerInstructionsFile,
-      hasValue(file.instructionsFile)
-        ? String(file.instructionsFile)
-        : path.join(packageRoot, 'templates', 'TESTER.md')
-    ),
+    instructionsFile: resolveInstructionsFile(cwd, 'PI_INSTRUCTIONS_FILE', file.instructionsFile, bundledDeveloperInstructionsFile),
+    developerInstructionsFile,
+    testerInstructionsFile,
+    usingBundledDeveloperInstructions: developerInstructionsFile === bundledDeveloperInstructionsFile,
+    usingBundledTesterInstructions: testerInstructionsFile === bundledTesterInstructionsFile,
     logFile: resolveFromCwd(cwd, 'PI_LOG_FILE', file.logFile, 'pi.log'),
     telemetryJsonl: resolveFromCwd(cwd, 'PI_TELEMETRY_JSONL', file.telemetryJsonl, 'pi_telemetry.jsonl'),
     telemetryCsv: resolveFromCwd(cwd, 'PI_TELEMETRY_CSV', file.telemetryCsv, 'pi_telemetry.csv'),
@@ -221,6 +227,7 @@ export function loadConfig(mode = 'once') {
     lastAgentOutputFile: resolveFromCwd(cwd, 'PI_LAST_AGENT_OUTPUT_FILE', file.lastAgentOutputFile, '.pi-last-output.txt'),
     lastVerificationOutputFile: resolveFromCwd(cwd, 'PI_LAST_VERIFICATION_OUTPUT_FILE', file.lastVerificationOutputFile, '.pi-last-verification.txt'),
     changedFilesFile: resolveFromCwd(cwd, 'PI_CHANGED_FILES_FILE', file.changedFilesFile, '.pi-changed-files.txt'),
+    lastPromptFile: resolveFromCwd(cwd, 'PI_LAST_PROMPT_FILE', file.lastPromptFile, '.pi-last-prompt.txt'),
     piRuntimeDir: resolveFromCwd(cwd, 'PI_RUNTIME_DIR', file.piRuntimeDir, '.pi-runtime'),
     piCli: readString('PI_CLI', file.piCli, 'pi'),
     piModel,

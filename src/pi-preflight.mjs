@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises'
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import process from 'node:process'
 
@@ -34,20 +34,42 @@ export function parsePiListModelsOutput(output) {
   }
 
   const ids = []
+  let modelColumnIndex = -1
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim()
+    const stripped = line.replace(/^[-*]\s+/, '').trim()
+    const columns = stripped.split(/\s+/).filter(Boolean)
+    const normalizedColumns = columns.map((value) => value.toLowerCase())
+
+    if (
+      modelColumnIndex === -1
+      && normalizedColumns.includes('model')
+      && normalizedColumns.some((value) => value === 'provider' || value === 'id' || value === 'name')
+    ) {
+      modelColumnIndex = normalizedColumns.indexOf('model')
+      continue
+    }
+
     if (
       line === ''
       || /^available models:?$/i.test(line)
       || /^models:?$/i.test(line)
       || /^id\s+/i.test(line)
       || /^name\s+/i.test(line)
+      || /^[-=\s]+$/.test(line)
     ) {
       continue
     }
 
-    const stripped = line.replace(/^[-*]\s+/, '').trim()
-    const firstToken = stripped.split(/\s+/)[0]?.trim() ?? ''
+    if (modelColumnIndex >= 0) {
+      const modelToken = columns[modelColumnIndex]?.trim() ?? ''
+      if (modelToken !== '') {
+        ids.push(modelToken)
+      }
+      continue
+    }
+
+    const firstToken = columns[0]?.trim() ?? ''
     if (firstToken !== '') {
       ids.push(firstToken)
     }
@@ -106,24 +128,33 @@ async function ensurePiHomeModelsConfig() {
 }
 
 function listPiModels(config) {
-  try {
-    const output = execFileSync(config.piCli, ['--list-models'], {
-      cwd: config.cwd,
-      env: process.env,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    return parsePiListModelsOutput(output)
-  } catch (error) {
-    const stdout = error?.stdout ? String(error.stdout).trim() : ''
-    const stderr = error?.stderr ? String(error.stderr).trim() : ''
-    const details = [stdout, stderr].filter(Boolean).join('\n')
+  const result = spawnSync(config.piCli, ['--list-models'], {
+    cwd: config.cwd,
+    env: process.env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const stdout = String(result.stdout ?? '').trim()
+  const stderr = String(result.stderr ?? '').trim()
+  const combinedOutput = [stdout, stderr].filter(Boolean).join('\n').trim()
+
+  if (result.error) {
     throw new Error(
-      details === ''
+      combinedOutput === ''
         ? `Failed to list PI models via "${config.piCli} --list-models".`
-        : `Failed to list PI models via "${config.piCli} --list-models".\n${details}`
+        : `Failed to list PI models via "${config.piCli} --list-models".\n${combinedOutput}`
     )
   }
+
+  if (result.status !== 0) {
+    throw new Error(
+      combinedOutput === ''
+        ? `Failed to list PI models via "${config.piCli} --list-models".`
+        : `Failed to list PI models via "${config.piCli} --list-models".\n${combinedOutput}`
+    )
+  }
+
+  return parsePiListModelsOutput(combinedOutput)
 }
 
 function getConfiguredTextModels(config) {

@@ -74,13 +74,16 @@ function normalizeStatusPath(statusPath) {
 }
 
 function parseStatusLine(line) {
-  const trimmed = line.trim()
-  if (trimmed === '') {
+  if (line.trim() === '') {
+    return null
+  }
+
+  if (line.length < 4 || line[2] !== ' ') {
     return null
   }
 
   const renamedMarker = ' -> '
-  const pathText = trimmed.slice(3)
+  const pathText = line.slice(3)
   if (pathText.includes(renamedMarker)) {
     const [, nextPath] = pathText.split(renamedMarker)
     return normalizeStatusPath(nextPath)

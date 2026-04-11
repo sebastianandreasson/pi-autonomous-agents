@@ -32,6 +32,19 @@ test('parses tabular pi --list-models output', () => {
   ])
 })
 
+test('parses provider-first tabular pi --list-models output using the model column', () => {
+  const output = [
+    'provider model status',
+    'local gemma-4-26B-A4B-it-UD-Q6_K.gguf ready',
+    'local local/tester-model ready',
+  ].join('\n')
+
+  assert.deepEqual(parsePiListModelsOutput(output), [
+    'gemma-4-26B-A4B-it-UD-Q6_K.gguf',
+    'local/tester-model',
+  ])
+})
+
 test('extracts model ids from openai-compatible provider responses', () => {
   const payload = {
     data: [

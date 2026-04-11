@@ -31,6 +31,7 @@ test('collectHistoryTargets includes configured harness outputs', () => {
     lastAgentOutputFile: path.join(cwd, '.pi-last-output.txt'),
     lastVerificationOutputFile: path.join(cwd, '.pi-last-verification.txt'),
     changedFilesFile: path.join(cwd, '.pi-changed-files.txt'),
+    lastPromptFile: path.join(cwd, '.pi-last-prompt.txt'),
     piRuntimeDir: path.join(cwd, '.pi-runtime'),
     visualFeedbackFile: path.join(cwd, 'pi-output/visual-review/FEEDBACK.md'),
     testerFeedbackFile: path.join(cwd, 'pi-output/tester-feedback/FEEDBACK.md'),
@@ -39,7 +40,7 @@ test('collectHistoryTargets includes configured harness outputs', () => {
     visualCaptureDir: path.join(cwd, 'pi-output/visual-capture'),
   }
 
-  assert.equal(collectHistoryTargets(config).length, 14)
+  assert.equal(collectHistoryTargets(config).length, 15)
 })
 
 test('clearHarnessHistory removes configured state and verifies clean slate', async () => {
@@ -54,6 +55,7 @@ test('clearHarnessHistory removes configured state and verifies clean slate', as
     lastAgentOutputFile: path.join(cwd, '.pi-last-output.txt'),
     lastVerificationOutputFile: path.join(cwd, '.pi-last-verification.txt'),
     changedFilesFile: path.join(cwd, '.pi-changed-files.txt'),
+    lastPromptFile: path.join(cwd, '.pi-last-prompt.txt'),
     piRuntimeDir: path.join(cwd, '.pi-runtime'),
     visualFeedbackFile: path.join(cwd, 'pi-output/visual-review/FEEDBACK.md'),
     testerFeedbackFile: path.join(cwd, 'pi-output/tester-feedback/FEEDBACK.md'),
@@ -91,6 +93,7 @@ test('clearHarnessHistory refuses to remove targets outside cwd', async () => {
     lastAgentOutputFile: path.join(cwd, '.pi-last-output.txt'),
     lastVerificationOutputFile: path.join(cwd, '.pi-last-verification.txt'),
     changedFilesFile: path.join(cwd, '.pi-changed-files.txt'),
+    lastPromptFile: path.join(cwd, '.pi-last-prompt.txt'),
     piRuntimeDir: path.join(cwd, '.pi-runtime'),
     visualFeedbackFile: path.join(cwd, 'pi-output/visual-review/FEEDBACK.md'),
     testerFeedbackFile: path.join(cwd, 'pi-output/tester-feedback/FEEDBACK.md'),
