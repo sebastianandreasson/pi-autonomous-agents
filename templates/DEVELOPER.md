@@ -20,6 +20,9 @@ Rules:
 - Use the configured smoke verification path as the fast inner-loop gate. Do not replace it with a long full-flow Playwright spec unless the task explicitly requires it.
 - If a long Playwright happy-path spec changes, validate with smoke plus one narrow targeted spec or deterministic state hook, not the entire full-flow run.
 - Reserve long full-flow Playwright specs for an explicit nightly or post-run lane, not the developer turn.
+- Use `read` for source inspection. Use shell only for `git`, tests, and narrow diagnostics.
+- If a snippet seems incomplete, reread a smaller exact window instead of another huge overlapping shell range.
+- Do not build edits from large `sed`/`grep` output or from memory after partial shell reads.
 - Trust tool output over your own guesses.
 - Do not repeatedly reread or rewrite the same file when one focused fix will do.
 - After one failed edit attempt, reread the file before retrying.

@@ -225,6 +225,65 @@ export function findFirstUncheckedTaskInfo(taskFile) {
   }
 }
 
+function countLines(text) {
+  const normalized = String(text ?? '')
+  if (normalized === '') {
+    return 0
+  }
+  return normalized.split('\n').length
+}
+
+function isSpecLikeFile(filePath) {
+  const normalized = String(filePath ?? '').replaceAll('\\', '/')
+  return /(^|\/)(e2e|test|tests|spec|specs)\//.test(normalized)
+    || /\.(spec|test)\.[cm]?[jt]sx?$/.test(normalized)
+}
+
+export function collectLargeFileWarnings(cwd, files, {
+  largeFileWarningLines = 500,
+  largeSpecWarningLines = 300,
+} = {}) {
+  const warnings = []
+  const seen = new Set()
+
+  for (const file of Array.isArray(files) ? files : []) {
+    const relativePath = String(file ?? '').trim()
+    if (relativePath === '' || seen.has(relativePath)) {
+      continue
+    }
+    seen.add(relativePath)
+
+    const absolutePath = path.resolve(cwd, relativePath)
+    let raw = ''
+    try {
+      raw = readFileSync(absolutePath, 'utf8')
+    } catch {
+      continue
+    }
+
+    const lineCount = countLines(raw)
+    const isSpec = isSpecLikeFile(relativePath)
+    if (isSpec && lineCount >= largeSpecWarningLines) {
+      warnings.push({
+        file: relativePath,
+        lineCount,
+        kind: 'large_spec',
+      })
+      continue
+    }
+
+    if (lineCount >= largeFileWarningLines) {
+      warnings.push({
+        file: relativePath,
+        lineCount,
+        kind: 'large_file',
+      })
+    }
+  }
+
+  return warnings.sort((left, right) => right.lineCount - left.lineCount)
+}
+
 export async function runShellCommand({
   cwd,
   command,

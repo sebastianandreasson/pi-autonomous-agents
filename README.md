@@ -6,7 +6,7 @@
 - a fast verification step
 - a skeptical `tester` pass
 - optional periodic multimodal visual review
-- harness-owned git finalization
+- tester-owned final commit by default
 
 The package is intentionally generic. It does not know how to navigate or test a specific app on its own.
 
@@ -18,7 +18,7 @@ The package is intentionally generic. It does not know how to navigate or test a
 - telemetry
 - loop guards, timeout guards, and retries
 - tester feedback + visual feedback handoff
-- harness-owned git finalize step
+- optional legacy harness git finalize step for `commitMode: "plan"`
 - multimodal visual review client
 
 ## What Stays Per Project
@@ -118,5 +118,9 @@ The adapter heartbeat is PI-RPC-event based. Streaming shell output does not cou
 By default, successful tester passes should stage and create the commit directly in the same PI turn. The old commit-plan parsing flow is still available as `commitMode: "plan"`, but it is now a compatibility mode rather than the default.
 
 Prompt/context handoff is compact by default. The harness now caps prior feedback excerpts, changed-file lists, verification excerpts, and prompt note handoff. If needed, tune `maxPromptChangedFiles`, `maxVisualFeedbackLines`, `maxTesterFeedbackLines`, `maxPromptNotesLines`, and `maxVerificationExcerptLines`.
+
+The default coding tool mix is now safer for local models: `read,edit,write,find,ls,bash`. Prompts explicitly steer source inspection toward `read` and reserve shell usage for `git`, tests, and narrow diagnostics.
+
+The harness also emits lightweight large-file warnings for touched source/spec files and carries them into `.pi-last-iteration.json`, `pi-harness report`, and relevant prompts. Tune `largeFileWarningLines` and `largeSpecWarningLines` if needed.
 
 The harness expects screenshot capture to produce a `manifest.json` plus image files under the configured visual capture directory.

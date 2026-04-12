@@ -54,6 +54,44 @@ function extractToolTarget(toolName, args) {
   return ''
 }
 
+function extractShellCommand(args) {
+  if (!args || typeof args !== 'object') {
+    return ''
+  }
+
+  if (typeof args.command === 'string') {
+    return args.command
+  }
+
+  if (typeof args.cmd === 'string') {
+    return args.cmd
+  }
+
+  return ''
+}
+
+function isLargeShellRead(command) {
+  const text = String(command ?? '').trim()
+  if (text === '') {
+    return false
+  }
+
+  if (/^\s*cat\s+\S+/.test(text)) {
+    return true
+  }
+
+  const sedMatch = text.match(/sed\s+-n\s+['"]?(\d+)\s*,\s*(\d+)p['"]?/)
+  if (sedMatch) {
+    const start = Number.parseInt(sedMatch[1], 10)
+    const end = Number.parseInt(sedMatch[2], 10)
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+      return (end - start) >= 120
+    }
+  }
+
+  return false
+}
+
 function extractAssistantText(message) {
   if (!message || message.role !== 'assistant' || !Array.isArray(message.content)) {
     return ''
@@ -295,6 +333,7 @@ async function run() {
       activeToolName = String(data.toolName ?? '')
       activeToolStartedAt = Date.now()
       const target = extractToolTarget(data.toolName, data.args)
+      const shellCommand = data.toolName === 'bash' ? extractShellCommand(data.args) : ''
       if (signature === lastToolSignature) {
         repeatedToolCount += 1
       } else {
@@ -325,6 +364,9 @@ async function run() {
       }
 
       writeLive(`[PI tool:start] ${data.toolName}${suffix}\n`)
+      if (data.toolName === 'bash' && isLargeShellRead(shellCommand)) {
+        writeLive('[PI warning] large bash file read detected; prefer read or a smaller exact window to avoid truncated context.\n')
+      }
     }
 
     if (data.type === 'tool_execution_end') {

@@ -13,6 +13,7 @@ import {
 import { appendTelemetry, ensureTelemetryFiles } from './pi-telemetry.mjs'
 import {
   appendLog,
+  collectLargeFileWarnings,
   commitStagedFiles,
   didRepoChange,
   ensureFileExists,
@@ -77,6 +78,10 @@ function printTerminalSummary(config, summary) {
 
   if (summary.notes) {
     lines.push(`[PI supervisor] notes=${summary.notes}`)
+  }
+
+  if (Array.isArray(summary.largeFileWarnings) && summary.largeFileWarnings.length > 0) {
+    lines.push(`[PI supervisor] large_file_warnings=${formatLargeFileWarningsInline(summary.largeFileWarnings)}`)
   }
 
   if (summary.terminalReason) {
@@ -162,6 +167,7 @@ function createIterationSummary({
   gitFinalizeStatus,
   visualStatus,
   terminalReason,
+  largeFileWarnings,
   sessionId,
   developerModel,
   testerModel,
@@ -180,6 +186,7 @@ function createIterationSummary({
     gitFinalizeStatus,
     visualStatus,
     terminalReason,
+    largeFileWarnings,
     sessionId,
     developerModel,
     testerModel,
@@ -189,6 +196,39 @@ function createIterationSummary({
 
 function didInvocationCreateCommit(invocation) {
   return invocation?.beforeSnapshot?.head !== invocation?.afterSnapshot?.head
+}
+
+function mergeLargeFileWarnings(existing, incoming) {
+  const merged = new Map()
+  for (const warning of [...(existing || []), ...(incoming || [])]) {
+    if (!warning?.file) {
+      continue
+    }
+    const key = `${warning.kind}:${warning.file}`
+    const current = merged.get(key)
+    if (!current || Number(warning.lineCount) > Number(current.lineCount)) {
+      merged.set(key, warning)
+    }
+  }
+  return [...merged.values()].sort((left, right) => right.lineCount - left.lineCount)
+}
+
+function findLargeFileWarnings(config, files) {
+  return collectLargeFileWarnings(config.cwd, files, {
+    largeFileWarningLines: config.largeFileWarningLines,
+    largeSpecWarningLines: config.largeSpecWarningLines,
+  })
+}
+
+function formatLargeFileWarningsInline(warnings) {
+  const list = Array.isArray(warnings) ? warnings : []
+  if (list.length === 0) {
+    return ''
+  }
+  return list
+    .slice(0, 3)
+    .map((warning) => `${warning.file}(${warning.lineCount}${warning.kind === 'large_spec' ? ',spec' : ''})`)
+    .join(', ')
 }
 
 function clampPromptLines(text, maxLines) {
@@ -644,6 +684,7 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
     prompt = buildSteeringPrompt(config, reason, {
       visualFeedback: await readLatestVisualFeedback(config),
       testerFeedback: await readLatestTesterFeedback(config),
+      largeFileWarnings: findLargeFileWarnings(config, listChangedFiles(config.cwd)),
     })
 
     if (shouldRetryForTimeout || shouldRetryForNoChange) {
@@ -656,12 +697,14 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
 }
 
 async function runFixTurn({ config, iteration, phase, sessionId, sessionFile, testerOutput }) {
+  const largeFileWarnings = findLargeFileWarnings(config, listChangedFiles(config.cwd))
   const fixPrompt = buildFixPrompt(
     config,
     clampPromptLines(testerOutput, Number(config.maxVerificationExcerptLines) || 40),
     {
       visualFeedback: await readLatestVisualFeedback(config),
       testerFeedback: await readLatestTesterFeedback(config),
+      largeFileWarnings,
     }
   )
   return await runAgentInvocation({
@@ -762,6 +805,7 @@ async function runTesterTurn({
   developerNotes,
   reason,
 }) {
+  const largeFileWarnings = findLargeFileWarnings(config, changedFiles)
   const prompt = buildTesterPrompt(config, {
     phase,
     task,
@@ -770,6 +814,7 @@ async function runTesterTurn({
     reason,
     visualFeedback: await readLatestVisualFeedback(config),
     testerFeedback: await readLatestTesterFeedback(config),
+    largeFileWarnings,
   })
 
   const invocation = await runAgentInvocation({
@@ -835,6 +880,7 @@ async function runTesterCommitTurn({
   developerNotes,
   reason,
 }) {
+  const largeFileWarnings = findLargeFileWarnings(config, changedFiles)
   const prompt = buildCommitPrompt(config, {
     phase,
     task,
@@ -843,6 +889,7 @@ async function runTesterCommitTurn({
     reason,
     visualFeedback: await readLatestVisualFeedback(config),
     testerFeedback: await readLatestTesterFeedback(config),
+    largeFileWarnings,
   })
 
   const invocation = await runAgentInvocation({
@@ -1054,6 +1101,7 @@ async function runIteration({ config, state, iteration }) {
         gitFinalizeStatus: 'not_run',
         visualStatus: 'not_run',
         terminalReason: 'all_tasks_complete',
+        largeFileWarnings: [],
         notes: 'No unchecked tasks remain in TODOS.md.',
         sessionId: state.sessionId || '',
         outputPath: config.lastAgentOutputFile,
@@ -1103,6 +1151,7 @@ async function runIteration({ config, state, iteration }) {
   let commitPlanFound = false
   let gitFinalizeStatus = 'not_run'
   let terminalReason = mainInvocation.result.terminalReason || ''
+  let largeFileWarnings = findLargeFileWarnings(config, mainInvocation.changedFiles)
   const noteParts = [`developer: ${mainInvocation.result.notes}`]
 
   if (mainInvocation.result.status === 'success' && config.transport === 'mock') {
@@ -1157,6 +1206,7 @@ async function runIteration({ config, state, iteration }) {
       testerVerdict = testerInvocation.testerVerdict
       commitPlanFound = testerInvocation.commitPlanFound === true
       terminalReason = testerInvocation.result.terminalReason || terminalReason
+      largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
       noteParts.push(`tester: ${testerInvocation.result.notes}`)
       await writeTesterFeedback(config, {
         iteration,
@@ -1184,6 +1234,7 @@ async function runIteration({ config, state, iteration }) {
         testerVerdict = testerCommitInvocation.testerVerdict
         commitPlanFound = testerCommitInvocation.commitPlanFound === true
         terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
+        largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
         noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
         await writeTesterFeedback(config, {
           iteration,
@@ -1241,6 +1292,7 @@ async function runIteration({ config, state, iteration }) {
       sessionFile = fixInvocation.result.sessionFile || sessionFile
       developerStatus = fixInvocation.result.status
       terminalReason = fixInvocation.result.terminalReason || 'developer_fix_incomplete'
+      largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
       noteParts.push(`developer_fix: ${fixInvocation.result.notes}`)
 
       if (fixInvocation.result.status === 'success') {
@@ -1258,6 +1310,7 @@ async function runIteration({ config, state, iteration }) {
         testerVerdict = testerRecheck.testerVerdict
         commitPlanFound = testerRecheck.commitPlanFound === true
         terminalReason = testerRecheck.result.terminalReason || terminalReason
+        largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
         noteParts.push(`tester_recheck: ${testerRecheck.result.notes}`)
         await writeTesterFeedback(config, {
           iteration,
@@ -1285,6 +1338,7 @@ async function runIteration({ config, state, iteration }) {
           testerVerdict = testerCommitInvocation.testerVerdict
           commitPlanFound = testerCommitInvocation.commitPlanFound === true
           terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
+          largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
           noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
           await writeTesterFeedback(config, {
             iteration,
@@ -1436,7 +1490,7 @@ async function runIteration({ config, state, iteration }) {
 
   await appendLog(
     config.logFile,
-    `Finished iteration ${iteration} with status=${finalStatus} verification=${finalVerificationStatus} tester_verdict=${testerVerdict} commit_plan_found=${commitPlanFound} terminal_reason=${terminalReason}`
+    `Finished iteration ${iteration} with status=${finalStatus} verification=${finalVerificationStatus} tester_verdict=${testerVerdict} commit_plan_found=${commitPlanFound} terminal_reason=${terminalReason}${largeFileWarnings.length > 0 ? ` large_file_warnings=${formatLargeFileWarningsInline(largeFileWarnings)}` : ''}`
   )
 
   const iterationEndSnapshot = getRepoSnapshot(config.cwd)
@@ -1453,6 +1507,7 @@ async function runIteration({ config, state, iteration }) {
     gitFinalizeStatus,
     visualStatus,
     terminalReason,
+    largeFileWarnings,
     sessionId,
     developerModel: developerModelName,
     testerModel: testerModelName,
@@ -1486,6 +1541,7 @@ async function runIteration({ config, state, iteration }) {
     testerVerdict,
     commitPlanFound,
     terminalReason,
+    riskWarnings: formatLargeFileWarningsInline(largeFileWarnings),
     notes: noteParts.join(' | '),
   })
 
@@ -1504,6 +1560,7 @@ async function runIteration({ config, state, iteration }) {
       gitFinalizeStatus,
       visualStatus,
       terminalReason,
+      largeFileWarnings,
       notes: noteParts.join(' | '),
       sessionId,
       outputPath: config.lastAgentOutputFile,

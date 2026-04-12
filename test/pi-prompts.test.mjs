@@ -24,6 +24,7 @@ const baseConfig = {
 test('developer prompt uses repo-relative instruction paths', () => {
   const prompt = buildMainPrompt(baseConfig)
   assert.match(prompt, /Read TODOS\.md and pi\/DEVELOPER\.md\./)
+  assert.match(prompt, /Use read for source inspection/i)
 })
 
 test('tester prompt uses repo-relative instruction paths', () => {
@@ -48,6 +49,7 @@ test('custom tester instructions stay authoritative over package defaults', () =
   assert.doesNotMatch(prompt, /Run the repo verification command yourself:/)
   assert.match(prompt, /create the git commit yourself/i)
   assert.doesNotMatch(prompt, /COMMIT_FILES:/)
+  assert.match(prompt, /Use read for source inspection/i)
 })
 
 test('plan commit mode keeps commit-plan block for tester', () => {
@@ -81,4 +83,19 @@ test('tester prompt caps changed files and long notes', () => {
   assert.match(prompt, /- b\.ts/)
   assert.match(prompt, /\.\.\. and 1 more files/)
   assert.match(prompt, /\.\.\. \(1 more lines omitted\)/)
+})
+
+test('tester prompt includes large-file risk hint when relevant', () => {
+  const prompt = buildTesterPrompt(baseConfig, {
+    phase: 'Phase 1',
+    task: 'Task',
+    changedFiles: ['src/huge.ts'],
+    developerNotes: '',
+    largeFileWarnings: [
+      { file: 'src/huge.ts', lineCount: 612, kind: 'large_file' },
+    ],
+  })
+
+  assert.match(prompt, /Large file risk in touched files:/)
+  assert.match(prompt, /src\/huge\.ts \(612 lines\)/)
 })

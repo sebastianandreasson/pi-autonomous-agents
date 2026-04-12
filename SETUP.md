@@ -47,6 +47,7 @@ If the repo uses another package manager already, use the repo-native equivalent
   - `developerInstructionsFile`: `pi/DEVELOPER.md`
   - `testerInstructionsFile`: `pi/TESTER.md`
   - `commitMode`: normally `agent`
+  - `promptMode`: normally `compact`
   - `testCommand`: a fast bounded verification command for this repo
   - `visualCaptureCommand`: only if this repo has a real screenshot capture flow
   - `models` / `piModel` / `visualReviewModel` / `roleModels`: configure the models actually available in this environment
@@ -125,6 +126,7 @@ Recommended pattern:
 - local or slightly stronger model for `tester`
 - stronger frontier model for `visualReview` only if available
 - keep `commitMode` as `agent` unless the repo explicitly needs legacy harness-managed commit-plan parsing
+- keep large-file thresholds sensible for local models (`largeFileWarningLines`, `largeSpecWarningLines`)
 
 Example shape:
 
@@ -192,6 +194,7 @@ For flow debugging, inspect `.pi-last-iteration.json` after a run. It summarizes
 - Do not enable visual review unless the repo actually has a usable capture command and model config.
 - Keep changes minimal and local to harness setup.
 - Prefer very small, implementation-shaped TODO items for local models. Broad tasks tend to create long turns, retries, and weak tester behavior.
+- Prefer `read` for code inspection and keep shell usage focused on `git`, tests, and narrow diagnostics, especially for weaker local models.
 
 ## What To Report Back
 

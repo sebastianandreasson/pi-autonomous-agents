@@ -30,7 +30,7 @@ Main package files:
 - `src/pi-client.mjs`: transport layer
 - `src/pi-rpc-adapter.mjs`: built-in adapter from supervisor JSON to `pi --mode rpc`
 - `src/pi-config.mjs`: config loader
-- `src/pi-repo.mjs`: repo helpers, verification runner, git finalize step
+- `src/pi-repo.mjs`: repo helpers, verification runner, and optional legacy git finalize step
 - `src/pi-telemetry.mjs`: telemetry writer/reader
 - `src/pi-prompts.mjs`: default prompt builders
 - `src/pi-visual-review.mjs`: multimodal visual-review worker
@@ -126,7 +126,7 @@ Request shape:
   "runtimeDir": "/absolute/repo/path/.pi-runtime",
   "piCli": "pi",
   "model": "local/model-name",
-  "tools": "read,bash,edit,write,grep,find,ls",
+  "tools": "read,edit,write,find,ls,bash",
   "thinking": "",
   "noExtensions": false,
   "noSkills": false,
@@ -169,6 +169,8 @@ The default flow keeps commit ownership with the active agent:
 3. If the working tree is too messy to isolate safely, tester should return `VERDICT: BLOCKED` instead of guessing.
 
 If a repo explicitly needs the older harness-managed commit-plan flow, set `commitMode` to `plan`. In that mode, `testerCommit` and parsed commit plans are used as a compatibility path rather than the default.
+
+For source inspection, prompts prefer `read` and reserve shell usage for `git`, tests, and narrow diagnostics. Large shell file reads are more likely to truncate under context pressure than focused `read` calls.
 
 ## Persistent Handoffs
 

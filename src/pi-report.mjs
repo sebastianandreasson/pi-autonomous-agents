@@ -35,6 +35,17 @@ async function main() {
     console.log(`- ${kind}: ${count}`)
   }
 
+  const iterationSummaries = recent.filter((event) => event.kind === 'iteration_summary')
+  const warningsByIteration = iterationSummaries
+    .filter((event) => String(event.riskWarnings ?? '').trim() !== '')
+
+  if (warningsByIteration.length > 0) {
+    console.log('\nLarge file warnings:')
+    for (const event of warningsByIteration.slice(-5)) {
+      console.log(`- iteration ${event.iteration}: ${event.riskWarnings}`)
+    }
+  }
+
   const last = recent.at(-1)
   if (!last) {
     return

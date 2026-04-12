@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 
-const CSV_HEADER = 'timestamp,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,role,model,tool_calls,tool_errors,message_updates,stop_reason,loop_detected,loop_signature,tester_verdict,commit_plan_found,terminal_reason,notes\n'
+const CSV_HEADER = 'timestamp,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,role,model,tool_calls,tool_errors,message_updates,stop_reason,loop_detected,loop_signature,tester_verdict,commit_plan_found,terminal_reason,risk_warnings,notes\n'
 
 function csvEscape(value) {
   const text = String(value ?? '')
@@ -56,6 +56,7 @@ export async function appendTelemetry(config, event) {
     event.testerVerdict,
     event.commitPlanFound,
     event.terminalReason,
+    event.riskWarnings,
     event.notes,
   ].map(csvEscape).join(',')
 

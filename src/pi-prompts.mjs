@@ -40,6 +40,20 @@ function formatChangedFilesSection(files, maxFiles) {
   return lines.join('\n')
 }
 
+function formatLargeFileRiskHint(warnings) {
+  const list = Array.isArray(warnings) ? warnings.filter(Boolean) : []
+  if (list.length === 0) {
+    return ''
+  }
+
+  const lines = list
+    .slice(0, 3)
+    .map((warning) => `- ${warning.file} (${warning.lineCount} lines${warning.kind === 'large_spec' ? ', spec' : ''})`)
+    .join('\n')
+
+  return `\nLarge file risk in touched files:\n${lines}\nPrefer helper extraction, smaller scoped edits, or test splitting over broad in-place edits.\n`
+}
+
 function displayPath(config, filePath) {
   const relativePath = path.relative(config.cwd, filePath)
   if (
@@ -160,6 +174,9 @@ Harness rules:
 - Start by checking git status so you know whether unrelated changes already exist.
 - Update code, config, and docs only as needed for the selected task.
 - Tick only the checkbox items that are actually completed.
+- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
+- Do not build edits from large sed/grep output or from memory after partial shell reads.
+- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
 - If blocked, add a brief note directly under the relevant task in ${taskFile} explaining the blocker, then stop.
 - Do not create the final commit during the developer pass.
 ${staleEditRecoveryRules()}
@@ -180,6 +197,9 @@ Rules:
 - Start with git status.
 - Select the first unchecked actionable checkbox in phase order.
 - Keep changes minimal and scoped.
+- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
+- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
+- Do not edit from memory after partial shell output.
 - Tick only completed items.
 - If blocked, note it under the task in ${taskFile} and stop.
 - Do not touch lockfiles, generated files, or unrelated assets.
@@ -203,11 +223,13 @@ export function buildFixPrompt(config, recentVerificationOutput, options = {}) {
     config.usingBundledDeveloperInstructions,
   )
   const findings = clampLines(recentVerificationOutput, configMaxLines(config, 'maxVerificationExcerptLines', 40))
+  const largeFileRiskHint = formatLargeFileRiskHint(options.largeFileWarnings)
 
   if (!config.usingBundledDeveloperInstructions) {
     return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${largeFileRiskHint}
 
 The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
 
@@ -218,6 +240,9 @@ Harness rules:
 - Start by checking git status so you know which files are already dirty.
 - Do not paper over product bugs by weakening tests.
 - Keep changes minimal and focused on the failing behavior.
+- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
+- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
+- Do not edit from memory after partial shell output.
 - Do not perform speculative cleanup or unrelated refactors in this pass.
 - Do not create the final commit during the developer fix pass.
 ${staleEditRecoveryRules()}
@@ -230,6 +255,7 @@ Before stopping:
   return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${largeFileRiskHint}
 
 The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
 
@@ -240,6 +266,9 @@ Rules:
 - Start with git status.
 - Keep the fix narrow.
 - Do not weaken tests to hide product bugs.
+- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
+- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
+- Do not edit from memory after partial shell output.
 - Do not perform speculative cleanup or unrelated refactors.
 - Do not create the final commit.
 ${staleEditRecoveryRules()}
@@ -259,12 +288,14 @@ export function buildSteeringPrompt(config, reason, options = {}) {
     config.developerInstructionsFile,
     config.usingBundledDeveloperInstructions,
   )
+  const largeFileRiskHint = formatLargeFileRiskHint(options.largeFileWarnings)
 
   if (!config.usingBundledDeveloperInstructions) {
     return `Continue from the current repo state.
 Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${largeFileRiskHint}
 
 Reason for this follow-up: ${reason}
 
@@ -272,9 +303,11 @@ Select the first unchecked actionable checkbox in the current phase, complete on
 
 Additional harness guardrails:
 - Start by checking git status.
+- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
 - Do not repeat the same tool call over and over.
 - If you already read a file, use that context instead of rereading it unless something changed.
 - If an edit fails once, reread the file before retrying. Do not repeat the same exact edit attempt.
+- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
 - If you are stuck, make the smallest decisive next action or stop and state the blocker.`
   }
 
@@ -282,15 +315,18 @@ Additional harness guardrails:
 Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${largeFileRiskHint}
 
 Reason for this follow-up: ${reason}
 
 Select the first unchecked actionable checkbox in the current phase, complete one coherent task, tick completed items, run verification, and stop.
 
 Additional guardrails:
+- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
 - Do not repeat the same tool call over and over.
 - If you already read a file, use that context instead of rereading it unless something changed.
 - If an edit fails once, reread the file before retrying. Do not repeat the same exact edit attempt.
+- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
 - Prefer the configured smoke verification path and one narrow targeted check over long full-flow Playwright specs.
 - If you are stuck, make the smallest decisive next action or stop and state the blocker.`
 }
@@ -303,6 +339,7 @@ export function buildTesterPrompt(config, {
   reason = 'tester_review',
   visualFeedback = '',
   testerFeedback = '',
+  largeFileWarnings = [],
 }) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.testerInstructionsFile)
@@ -326,11 +363,13 @@ export function buildTesterPrompt(config, {
     config.usingBundledTesterInstructions,
   )
   const passOwnership = testerPassOwnershipRules(config)
+  const largeFileRiskHint = formatLargeFileRiskHint(largeFileWarnings)
 
   if (!config.usingBundledTesterInstructions) {
     return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${largeFileRiskHint}
 
 You are the TESTER role. You are reviewing the most recent developer work from an independent quality and functionality perspective.
 
@@ -348,6 +387,8 @@ Rules:
 - Start with git status.
 - Follow repo-local tester instructions for what to verify and which commands to run.
 - Prefer one focused review pass.
+- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
+- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
 - If blocked or inconclusive, return VERDICT: BLOCKED.
 - Do not hide real bugs with brittle tests.
 - ${passOwnership.successRule.slice(2)}
@@ -370,6 +411,7 @@ Before stopping, end your final response with exactly one verdict line:
   return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${largeFileRiskHint}
 
 You are the TESTER role. You are reviewing the most recent developer work from an independent quality and functionality perspective.
 
@@ -385,9 +427,11 @@ ${changedFilesSection}
 
 	Rules:
 	- Start with git status.
+	- Use read for source inspection. Use bash only for git, tests, and narrow diagnostics.
 	- Run the repo verification command yourself: ${verificationCommand}
 ${indentBlock(innerLoopValidationRules(verificationCommand), '\t')}
 	- Prefer one focused browser-driven review pass.
+	- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
 	- Do not hide real bugs with brittle tests.
 	- If blocked or inconclusive, return VERDICT: BLOCKED.
 ${indentBlock(passOwnership.successRule, '\t')}
@@ -415,6 +459,7 @@ export function buildCommitPrompt(config, {
   reason = 'tester_passed_without_commit',
   visualFeedback = '',
   testerFeedback = '',
+  largeFileWarnings = [],
 }) {
   const taskFile = displayPath(config, config.taskFile)
   const instructionsFile = displayPath(config, config.testerInstructionsFile)
@@ -433,10 +478,12 @@ export function buildCommitPrompt(config, {
     developerNotes || '(none provided)',
     configMaxLines(config, 'maxPromptNotesLines', 16),
   )
+  const largeFileRiskHint = formatLargeFileRiskHint(largeFileWarnings)
 
   return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${largeFileRiskHint}
 
 You are the TESTER role. The implementation already passed functional review, but the final commit was not created.
 

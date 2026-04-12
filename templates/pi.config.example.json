@@ -6,6 +6,8 @@
   "testerInstructionsFile": "pi/TESTER.md",
   "commitMode": "agent",
   "promptMode": "compact",
+  "largeFileWarningLines": 500,
+  "largeSpecWarningLines": 300,
   "piModel": "local/text-model",
   "models": {
     "local/text-model": {
