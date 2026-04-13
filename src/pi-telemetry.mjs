@@ -14,6 +14,10 @@ export async function ensureTelemetryFiles(config) {
     await fs.mkdir(path.dirname(config.runLastAgentOutputFile), { recursive: true })
     await fs.writeFile(config.runLastAgentOutputFile, '', 'utf8')
   }
+  if (config.runLiveFeedFile) {
+    await fs.mkdir(path.dirname(config.runLiveFeedFile), { recursive: true })
+    await fs.writeFile(config.runLiveFeedFile, '', 'utf8')
+  }
   await fs.writeFile(config.lastVerificationOutputFile, '', 'utf8')
   await fs.writeFile(config.changedFilesFile, '', 'utf8')
   await fs.writeFile(config.lastPromptFile, '', 'utf8')

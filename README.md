@@ -277,6 +277,9 @@ Visualizer now includes:
 - per-iteration stage graph with retries/rechecks
 - clickable graph nodes and timeline rows that show full event JSON
 - historical run summaries and per-run last output snapshots
+- live worker feed with thinking text, assistant text, tool calls, and tool output
+- feed controls to hide thinking and collapse repetitive deltas
+- pinned latest tool output panel
 
 ## Visual Review Contract
 

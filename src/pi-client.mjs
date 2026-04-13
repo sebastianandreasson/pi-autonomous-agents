@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   appendLog,
@@ -35,6 +37,14 @@ async function writeAgentOutputSnapshot(config, content) {
   if (config.runLastAgentOutputFile && config.runLastAgentOutputFile !== config.lastAgentOutputFile) {
     await writeTextFile(config.runLastAgentOutputFile, content)
   }
+}
+
+async function appendLiveFeedEvent(config, event) {
+  if (!config.runLiveFeedFile) {
+    return
+  }
+  await fs.mkdir(path.dirname(config.runLiveFeedFile), { recursive: true })
+  await fs.appendFile(config.runLiveFeedFile, `${JSON.stringify(event)}\n`, 'utf8')
 }
 
 async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
@@ -78,7 +88,7 @@ async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
   }
 }
 
-async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prompt, iteration, retryCount, reason }) {
+async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prompt, iteration, retryCount, reason, phase, role, kind }) {
   await appendLog(
     config.logFile,
     `Starting SDK turn iteration=${iteration} retry=${retryCount} reason=${reason}`
@@ -118,6 +128,10 @@ async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prom
         retryCount,
         reason,
       },
+      phase,
+      role,
+      kind,
+      onLiveEvent: (event) => appendLiveFeedEvent(config, event),
     })
   } catch (error) {
     const notes = error instanceof Error ? error.message : String(error)

@@ -368,6 +368,9 @@ async function runAgentInvocation({
     iteration,
     retryCount,
     reason,
+    phase,
+    role,
+    kind,
   })
   const afterSnapshot = getRepoSnapshot(config.cwd)
   const changedFiles = listChangedFiles(config.cwd)
@@ -1734,6 +1737,7 @@ async function main() {
   config.runStateFile = path.join(runDir, 'state.json')
   config.runLastIterationSummaryFile = path.join(runDir, 'last-iteration.json')
   config.runLastAgentOutputFile = path.join(runDir, 'last-output.txt')
+  config.runLiveFeedFile = path.join(runDir, 'live-feed.jsonl')
 
   ensureRepo(config.cwd)
   await ensureFileExists(config.taskFile, 'task file')

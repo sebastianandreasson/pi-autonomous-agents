@@ -28,6 +28,20 @@ async function readOptionalText(filePath, maxLength = 6000) {
   }
 }
 
+async function readJsonlTail(filePath, maxItems = 200) {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8')
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-maxItems)
+      .map((line) => JSON.parse(line))
+  } catch {
+    return []
+  }
+}
+
 function getRunDir(config, runId) {
   return path.join(config.piRuntimeDir, 'runs', runId)
 }
@@ -42,6 +56,7 @@ function getRunScopedConfig(config, runId) {
     stateFile: path.join(runDir, 'state.json'),
     lastIterationSummaryFile: path.join(runDir, 'last-iteration.json'),
     lastAgentOutputFile: path.join(runDir, 'last-output.txt'),
+    liveFeedFile: path.join(runDir, 'live-feed.jsonl'),
     logFile: path.join(runDir, 'pi.log'),
   }
 }
@@ -101,11 +116,12 @@ export async function buildSnapshot(config, queryRunId = '') {
   const selectedRunId = resolveSelectedRunId(queryRunId, activeRun, runs)
   const selectedConfig = selectedRunId !== '' ? getRunScopedConfig(config, selectedRunId) : config
 
-  const [state, summary, telemetry, currentOutput] = await Promise.all([
+  const [state, summary, telemetry, currentOutput, liveFeed] = await Promise.all([
     readJsonFile(selectedConfig.stateFile, null),
     readJsonFile(selectedConfig.lastIterationSummaryFile, null),
     readTelemetry(selectedConfig),
     readOptionalText(selectedConfig.lastAgentOutputFile, 5000),
+    readJsonlTail(selectedConfig.liveFeedFile, 300),
   ])
 
   const recentTelemetry = telemetry.slice(-160).map((event, index) => ({
@@ -144,6 +160,7 @@ export async function buildSnapshot(config, queryRunId = '') {
     },
     graph,
     lastOutput: currentOutput,
+    liveFeed,
     recentTelemetry,
   }
 }
@@ -217,6 +234,24 @@ export function renderHtml() {
     .graph-node { min-height: 120px; width: 100%; text-align: left; color: var(--text); font: inherit; cursor: pointer; }
     .graph-arrow { color: var(--muted); text-align: center; align-self: center; }
     .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; margin-top: 12px; }
+    .feed-toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:12px; margin-bottom:10px; }
+    .feed-toggle { display:flex; gap:6px; align-items:center; color: var(--muted); font-size: 12px; }
+    .feed { background: #0a1325; border: 1px solid var(--line); border-radius: 12px; padding: 12px; max-height: 320px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .feed-item { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .feed-item:last-child { border-bottom: 0; }
+    .feed-head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .feed-type { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:999px; padding:2px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .feed-type.agent_start, .feed-type.agent_end { color: var(--active); }
+    .feed-type.thinking_delta { color: #b392f0; }
+    .feed-type.text_delta { color: var(--done); }
+    .feed-type.tool_start, .feed-type.tool_update, .feed-type.tool_end { color: var(--skip); }
+    .feed-meta { color: var(--muted); font-size: 12px; }
+    .feed-text { white-space: pre-wrap; word-break: break-word; margin-top: 6px; }
+    .feed-count { color: var(--muted); font-size: 11px; }
+    .pinned-tool { background:#0a1325; border: 1px solid var(--line); border-radius:12px; padding:12px; }
+    .pinned-tool-name { font-weight:700; }
+    .pinned-tool-meta { color: var(--muted); font-size:12px; margin-top:4px; }
+    .pinned-tool-text { white-space: pre-wrap; word-break: break-word; margin-top:8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .kv div:nth-child(odd) { color: var(--muted); }
     pre {
       margin: 0; white-space: pre-wrap; word-break: break-word; background: #0a1325;
@@ -281,6 +316,15 @@ export function renderHtml() {
 
       <div class="grid">
         <div class="card"><div class="label">Run state</div><div class="kv" id="run-state"></div></div>
+        <div class="card"><div class="label">Latest tool output</div><div class="pinned-tool" id="pinned-tool">No tool activity yet.</div></div>
+        <div class="card">
+          <div class="label">Live worker feed</div>
+          <div class="feed-toolbar">
+            <label class="feed-toggle"><input type="checkbox" id="feed-show-thinking" checked /> <span>Show thinking</span></label>
+            <label class="feed-toggle"><input type="checkbox" id="feed-collapse-deltas" checked /> <span>Collapse deltas</span></label>
+          </div>
+          <div class="feed" id="feed">No live feed yet.</div>
+        </div>
         <div class="card"><div class="label">Selected event</div><pre id="selected-event">Click graph node or timeline row.</pre></div>
         <div class="card"><div class="label">Last iteration summary</div><pre id="summary">—</pre></div>
         <div class="card"><div class="label">Last agent output</div><pre id="output">—</pre></div>
@@ -319,6 +363,56 @@ export function renderHtml() {
     let selectedEventId = ''
     let eventSource = null
 
+    function normalizeFeedEntry(entry) {
+      return {
+        ...entry,
+        type: String(entry?.type || 'event'),
+        text: String(entry?.text || ''),
+      }
+    }
+
+    function collapseFeedEntries(entries) {
+      const collapsed = []
+      for (const raw of entries) {
+        const entry = normalizeFeedEntry(raw)
+        const prev = collapsed[collapsed.length - 1]
+        const canMerge = prev
+          && (entry.type === 'text_delta' || entry.type === 'thinking_delta')
+          && prev.type === entry.type
+          && prev.role === entry.role
+          && prev.kind === entry.kind
+        if (canMerge) {
+          prev.text += entry.text
+          prev.count = (prev.count || 1) + 1
+          prev.timestamp = entry.timestamp
+          continue
+        }
+        collapsed.push({ ...entry, count: 1 })
+      }
+      return collapsed
+    }
+
+    function getVisibleFeedEntries(snapshot) {
+      const showThinking = document.getElementById('feed-show-thinking')?.checked !== false
+      const collapseDeltas = document.getElementById('feed-collapse-deltas')?.checked !== false
+      const source = Array.isArray(snapshot?.liveFeed) ? snapshot.liveFeed : []
+      const filtered = source.filter((entry) => showThinking || entry.type !== 'thinking_delta')
+      return collapseDeltas ? collapseFeedEntries(filtered) : filtered.map((entry) => ({ ...normalizeFeedEntry(entry), count: 1 }))
+    }
+
+    function renderPinnedTool(snapshot) {
+      const target = document.getElementById('pinned-tool')
+      const source = Array.isArray(snapshot?.liveFeed) ? [...snapshot.liveFeed].reverse() : []
+      const latest = source.find((entry) => entry.type === 'tool_update' || entry.type === 'tool_end' || entry.type === 'tool_start')
+      if (!latest) {
+        target.textContent = 'No tool activity yet.'
+        return
+      }
+      target.innerHTML = '<div class="pinned-tool-name">' + esc(latest.toolName || 'tool') + '</div>' +
+        '<div class="pinned-tool-meta">' + esc(latest.type) + ' · ' + esc(new Date(latest.timestamp).toLocaleTimeString()) + '</div>' +
+        '<div class="pinned-tool-text">' + esc(latest.text || '') + '</div>'
+    }
+
     function findEventById(snapshot, eventId) {
       if (!snapshot || !eventId) return null
       return snapshot.graph?.nodes?.find((node) => node.id === eventId)?.event
@@ -339,6 +433,17 @@ export function renderHtml() {
           selectedEventId = element.getAttribute('data-event-id') || ''
           renderSelectedEvent()
         })
+      })
+      ;['feed-show-thinking', 'feed-collapse-deltas'].forEach((id) => {
+        const input = document.getElementById(id)
+        if (input && !input.dataset.bound) {
+          input.addEventListener('change', () => {
+            if (latestSnapshot) {
+              renderSnapshot(latestSnapshot)
+            }
+          })
+          input.dataset.bound = '1'
+        }
       })
     }
 
@@ -403,6 +508,24 @@ export function renderHtml() {
       document.getElementById('run-state').innerHTML = runState.map(([k, v]) => '<div>' + esc(k) + '</div><div>' + esc(v) + '</div>').join('')
       document.getElementById('summary').textContent = data.summary ? JSON.stringify(data.summary, null, 2) : 'No iteration summary yet.'
       document.getElementById('output').textContent = data.lastOutput || 'No agent output yet.'
+
+      renderPinnedTool(data)
+      const visibleFeed = getVisibleFeedEntries(data)
+      const feedEl = document.getElementById('feed')
+      feedEl.innerHTML = visibleFeed.length > 0
+        ? visibleFeed.map((entry) => {
+            const meta = [entry.role, entry.kind, entry.toolName].filter(Boolean).join(' · ')
+            return '<div class="feed-item">' +
+              '<div class="feed-head">' +
+                '<div class="feed-type ' + esc(entry.type) + '">' + esc(entry.type || 'event') + '</div>' +
+                (entry.count > 1 ? '<div class="feed-count">x' + esc(entry.count) + '</div>' : '') +
+              '</div>' +
+              '<div class="feed-meta">' + esc(new Date(entry.timestamp).toLocaleTimeString()) + (meta ? ' · ' + esc(meta) : '') + '</div>' +
+              '<div class="feed-text">' + esc(entry.text || '') + '</div>' +
+              '</div>'
+          }).join('')
+        : '<div class="muted">No live feed yet.</div>'
+      feedEl.scrollTop = feedEl.scrollHeight
 
       const timelineEvents = [...data.recentTelemetry].reverse()
       const timeline = timelineEvents.map((event) => {

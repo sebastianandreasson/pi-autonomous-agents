@@ -300,6 +300,22 @@ export async function createSdkSession(pi, request) {
   })
 }
 
+function emitLiveFeed(request, event) {
+  if (typeof request?.onLiveEvent !== 'function') {
+    return
+  }
+  request.onLiveEvent({
+    timestamp: new Date().toISOString(),
+    iteration: Number(request?.metadata?.iteration ?? 0),
+    retryCount: Number(request?.metadata?.retryCount ?? 0),
+    reason: String(request?.metadata?.reason ?? request?.reason ?? ''),
+    phase: String(request?.phase ?? ''),
+    role: String(request?.role ?? ''),
+    kind: String(request?.kind ?? ''),
+    ...event,
+  })
+}
+
 async function safeAbort(session) {
   try {
     await session.abort()
@@ -430,10 +446,25 @@ export async function runSdkTurnWithPi(pi, request) {
 
       if (event.type === 'agent_start') {
         agentStarted = true
+        emitLiveFeed(request, {
+          type: 'agent_start',
+          text: 'agent started',
+        })
         writeLive('[PI] agent started\n')
       }
 
+      if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'thinking_delta') {
+        emitLiveFeed(request, {
+          type: 'thinking_delta',
+          text: event.assistantMessageEvent.delta,
+        })
+      }
+
       if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
+        emitLiveFeed(request, {
+          type: 'text_delta',
+          text: event.assistantMessageEvent.delta,
+        })
         ensureAssistantLine()
         writeLive(event.assistantMessageEvent.delta)
         streamedAssistantText = true
@@ -488,21 +519,47 @@ export async function runSdkTurnWithPi(pi, request) {
           requestAbortForLoop()
         }
 
+        emitLiveFeed(request, {
+          type: 'tool_start',
+          toolName: String(event.toolName ?? ''),
+          args: event.args,
+          text: `${String(event.toolName ?? '')}${suffix}`.trim(),
+        })
         writeLive(`[PI tool:start] ${event.toolName}${suffix}\n`)
         if (event.toolName === 'bash' && isLargeShellRead(shellCommand)) {
           writeLive('[PI warning] large bash file read detected; prefer read or a smaller exact window to avoid truncated context.\n')
         }
       }
 
+      if (event.type === 'tool_execution_update') {
+        emitLiveFeed(request, {
+          type: 'tool_update',
+          toolName: String(event.toolName ?? ''),
+          partialResult: event.partialResult,
+          text: formatValue(event.partialResult),
+        })
+      }
+
       if (event.type === 'tool_execution_end') {
         closeAssistantLine()
         activeToolName = ''
         activeToolStartedAt = 0
+        emitLiveFeed(request, {
+          type: 'tool_end',
+          toolName: String(event.toolName ?? ''),
+          isError: event.isError === true,
+          result: event.result,
+          text: `${String(event.toolName ?? '')} ${event.isError ? 'error' : 'ok'}`,
+        })
         writeLive(`[PI tool:end] ${event.toolName} ${event.isError ? 'error' : 'ok'}\n`)
       }
 
       if (event.type === 'agent_end') {
         agentEnded = true
+        emitLiveFeed(request, {
+          type: 'agent_end',
+          text: 'agent finished',
+        })
         closeAssistantLine()
         writeLive('[PI] agent finished\n')
       }
