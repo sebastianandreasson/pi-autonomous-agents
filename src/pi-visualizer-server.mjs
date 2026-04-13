@@ -369,7 +369,7 @@ export function renderHtml() {
       const flowEl = document.getElementById('flow')
       flowEl.innerHTML = data.flow.steps.map((step) => {
         const latest = step.latestEvent
-        const meta = latest ? [latest.kind, latest.status, latest.terminalReason].filter(Boolean).join('\n') : 'waiting'
+        const meta = latest ? [latest.kind, latest.status, latest.terminalReason].filter(Boolean).join('\\n') : 'waiting'
         return '<div class="step ' + esc(step.status) + '">' +
           '<div class="step-name">' + esc(step.label) + '</div>' +
           '<div class="step-status">' + esc(step.status) + '</div>' +
@@ -381,11 +381,11 @@ export function renderHtml() {
       graphEl.innerHTML = data.graph.nodes.length > 0
         ? data.graph.nodes.map((node) => {
             const retry = node.retryCount > 0 ? 'retry #' + node.retryCount : ''
-            const meta = [node.kind, retry, node.role, node.terminalReason].filter(Boolean).join('\n')
+            const meta = [node.kind, retry, node.role, node.terminalReason].filter(Boolean).join('\\n')
             return '<button type="button" class="graph-node ' + esc(node.status) + '" data-event-id="' + esc(node.id) + '">' +
               '<div class="step-name">' + esc(node.label) + '</div>' +
               '<div class="step-status">' + esc(node.status) + '</div>' +
-              '<div class="step-meta">' + esc(meta) + '\n' + esc(node.notes || '') + '</div>' +
+              '<div class="step-meta">' + esc(meta) + '\\n' + esc(node.notes || '') + '</div>' +
               '</button>'
           }).join('')
         : '<div class="muted">No iteration graph yet.</div>'
