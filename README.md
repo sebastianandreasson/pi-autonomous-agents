@@ -93,6 +93,7 @@ The command removes configured harness history/runtime files and verifies that n
 
 For prompt debugging, the harness also writes the exact assembled prompt for the current role to `.pi-last-prompt.txt` by default.
 For flow debugging, it also writes a machine-readable `.pi-last-iteration.json` summary with the selected task, tester verdict, commit-plan state, and terminal reason.
+For run isolation, the supervisor also maintains `.pi-runtime/active-run.json` and stores PI sessions plus per-run telemetry under `.pi-runtime/runs/<runId>/`.
 
 ## Generic Contracts
 
@@ -112,6 +113,8 @@ For unattended loops, keep `testCommand` fast and bounded, such as a smoke suite
 Keep TODO items extremely small and implementation-shaped when using weaker local models. Broad tasks tend to produce much longer turns, more retries, and more tester drift than narrow one-step tasks.
 
 The adapter heartbeat is PI-RPC-event based. Streaming shell output does not count as progress on its own, so long-running tools should rely on the tool-aware watchdog thresholds rather than terminal streaming.
+
+The supervisor now enforces single-run ownership per repo/config. If a stale run crashed mid-iteration, the next run recovers the unfinished iteration number from `.pi-state.json` instead of silently rolling forward.
 
 `piModel` remains the default text model, but you can override specific roles with `roleModels` such as `developer`, `developerRetry`, `developerFix`, `tester`, and `visualReview`. `testerCommit` is only relevant if you opt back into `commitMode: "plan"`.
 

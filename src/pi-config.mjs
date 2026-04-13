@@ -246,6 +246,7 @@ export function loadConfig(mode = 'once') {
     lastPromptFile: resolveFromCwd(cwd, 'PI_LAST_PROMPT_FILE', file.lastPromptFile, '.pi-last-prompt.txt'),
     lastIterationSummaryFile: resolveFromCwd(cwd, 'PI_LAST_ITERATION_SUMMARY_FILE', file.lastIterationSummaryFile, '.pi-last-iteration.json'),
     piRuntimeDir: resolveFromCwd(cwd, 'PI_RUNTIME_DIR', file.piRuntimeDir, '.pi-runtime'),
+    activeRunFile: resolveFromCwd(cwd, 'PI_ACTIVE_RUN_FILE', file.activeRunFile, '.pi-runtime/active-run.json'),
     piCli: readString('PI_CLI', file.piCli, 'pi'),
     piModel,
     piModelProfile: resolvedPiModel,

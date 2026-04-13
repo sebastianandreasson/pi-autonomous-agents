@@ -10,6 +10,7 @@ import {
   getHeartbeatDecision,
   resolveHeartbeatConfig,
 } from './pi-heartbeat.mjs'
+import { signalProcessTree } from './pi-repo.mjs'
 
 function createJsonlReader(stream, onLine) {
   const rl = createInterface({ input: stream })
@@ -151,6 +152,7 @@ async function run() {
   const child = spawn(cli, args, {
     cwd: request.cwd,
     env: process.env,
+    detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 
@@ -239,10 +241,10 @@ async function run() {
     closeAssistantLine()
     writeLive(`[PI guard] ${formatHeartbeatTimeoutMessage(decision)} Aborting current turn (pid=${child.pid ?? 'unknown'}).\n`)
     void send({ type: 'abort' }).catch(() => {})
-    child.kill('SIGTERM')
+    signalProcessTree(child.pid, 'SIGTERM')
     setTimeout(() => {
       if (child.exitCode === null) {
-        child.kill('SIGKILL')
+        signalProcessTree(child.pid, 'SIGKILL')
       }
     }, 1000)
   }
@@ -578,10 +580,10 @@ async function run() {
     }
     pending.clear()
 
-    child.kill('SIGTERM')
+    signalProcessTree(child.pid, 'SIGTERM')
     await new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        child.kill('SIGKILL')
+        signalProcessTree(child.pid, 'SIGKILL')
         resolve()
       }, 1000)
 

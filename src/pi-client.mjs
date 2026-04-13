@@ -103,7 +103,7 @@ async function runAdapterTurn({ config, model, sessionId, sessionFile, prompt, i
     instructionsFile: config.instructionsFile,
     developerInstructionsFile: config.developerInstructionsFile,
     testerInstructionsFile: config.testerInstructionsFile,
-    runtimeDir: config.piRuntimeDir,
+    runtimeDir: config.runRuntimeDir || config.piRuntimeDir,
     piCli: config.piCli,
     model: model ?? config.piModel,
     tools: config.piTools,

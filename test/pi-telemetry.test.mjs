@@ -21,12 +21,15 @@ test('ensureTelemetryFiles prepares summary artifacts and structured CSV header'
     logFile: path.join(cwd, 'pi.log'),
     telemetryJsonl: path.join(cwd, 'pi_telemetry.jsonl'),
     telemetryCsv: path.join(cwd, 'pi_telemetry.csv'),
+    runTelemetryJsonl: path.join(cwd, '.pi-runtime', 'runs', 'run-1', 'pi_telemetry.jsonl'),
+    runTelemetryCsv: path.join(cwd, '.pi-runtime', 'runs', 'run-1', 'pi_telemetry.csv'),
   }
 
   await ensureTelemetryFiles(config)
 
   const csv = await fs.readFile(config.telemetryCsv, 'utf8')
   assert.match(csv, /tool_calls/)
+  assert.match(csv, /run_id/)
   assert.match(csv, /stop_reason/)
   assert.match(csv, /terminal_reason/)
   assert.equal(await fs.readFile(config.lastIterationSummaryFile, 'utf8'), '')
@@ -43,11 +46,14 @@ test('appendTelemetry writes structured telemetry columns', async () => {
     logFile: path.join(cwd, 'pi.log'),
     telemetryJsonl: path.join(cwd, 'pi_telemetry.jsonl'),
     telemetryCsv: path.join(cwd, 'pi_telemetry.csv'),
+    runTelemetryJsonl: path.join(cwd, '.pi-runtime', 'runs', 'run-1', 'pi_telemetry.jsonl'),
+    runTelemetryCsv: path.join(cwd, '.pi-runtime', 'runs', 'run-1', 'pi_telemetry.csv'),
   }
 
   await ensureTelemetryFiles(config)
   await appendTelemetry(config, {
     timestamp: '2026-04-11T00:00:00.000Z',
+    runId: 'run-1',
     iteration: 1,
     phase: 'Phase 1',
     kind: 'tester_agent',
@@ -81,4 +87,8 @@ test('appendTelemetry writes structured telemetry columns', async () => {
   assert.match(csv, /tester/)
   assert.match(csv, /local\/tester/)
   assert.match(csv, /tester_pass_with_commit_plan/)
+  assert.match(csv, /run-1/)
+
+  const runCsv = await fs.readFile(config.runTelemetryCsv, 'utf8')
+  assert.match(runCsv, /run-1/)
 })

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import process from 'node:process'
+import { randomUUID } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
 import path from 'node:path'
 
@@ -9,7 +10,17 @@ export function timestamp() {
 }
 
 export async function appendLog(logFile, message) {
-  await fs.appendFile(logFile, `[${timestamp()}] ${message}\n`, 'utf8')
+  const runId = String(process.env.PI_RUN_ID ?? '').trim()
+  const prefix = runId !== '' ? `[run:${runId}] ` : ''
+  const line = `[${timestamp()}] ${prefix}${message}\n`
+  await fs.mkdir(path.dirname(logFile), { recursive: true })
+  await fs.appendFile(logFile, line, 'utf8')
+
+  const runLogFile = String(process.env.PI_RUN_LOG_FILE ?? '').trim()
+  if (runLogFile !== '' && runLogFile !== logFile) {
+    await fs.mkdir(path.dirname(runLogFile), { recursive: true })
+    await fs.appendFile(runLogFile, line, 'utf8')
+  }
 }
 
 export function ensureRepo(cwd) {
@@ -30,7 +41,27 @@ export async function ensureFileExists(filePath, label) {
 export async function readState(stateFile) {
   try {
     const raw = await fs.readFile(stateFile, 'utf8')
-    return JSON.parse(raw)
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Invalid state file payload')
+    }
+    return {
+      iteration: 0,
+      lastTransport: '',
+      lastPiModel: '',
+      sessionId: '',
+      sessionFile: '',
+      consecutiveFailures: 0,
+      successfulIterations: 0,
+      lastPhase: '',
+      lastStatus: '',
+      lastVerificationStatus: '',
+      lastVisualStatus: '',
+      lastRunAt: '',
+      runId: '',
+      inProgress: null,
+      ...parsed,
+    }
   } catch {
     return {
       iteration: 0,
@@ -38,20 +69,163 @@ export async function readState(stateFile) {
       lastPiModel: '',
       sessionId: '',
       sessionFile: '',
-        consecutiveFailures: 0,
-        successfulIterations: 0,
-        lastPhase: '',
-        lastStatus: '',
-        lastVerificationStatus: '',
-        lastVisualStatus: '',
-        lastRunAt: '',
-      }
+      consecutiveFailures: 0,
+      successfulIterations: 0,
+      lastPhase: '',
+      lastStatus: '',
+      lastVerificationStatus: '',
+      lastVisualStatus: '',
+      lastRunAt: '',
+      runId: '',
+      inProgress: null,
+    }
   }
 }
 
 export async function writeState(stateFile, state) {
   const formatted = `${JSON.stringify(state, null, 2)}\n`
+  await fs.mkdir(path.dirname(stateFile), { recursive: true })
   await fs.writeFile(stateFile, formatted, 'utf8')
+}
+
+export function createRunId() {
+  return randomUUID()
+}
+
+function normalizePid(raw) {
+  const pid = Number.parseInt(String(raw ?? ''), 10)
+  return Number.isInteger(pid) && pid > 0 ? pid : 0
+}
+
+export function isProcessRunning(pid) {
+  const normalizedPid = normalizePid(pid)
+  if (normalizedPid <= 0) {
+    return false
+  }
+
+  try {
+    process.kill(normalizedPid, 0)
+    return true
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) {
+      return error.code === 'EPERM'
+    }
+    return false
+  }
+}
+
+export async function readJsonFile(filePath, fallback = null) {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8')
+    return JSON.parse(raw)
+  } catch {
+    return fallback
+  }
+}
+
+async function writeJsonFile(filePath, value, flags) {
+  const formatted = `${JSON.stringify(value, null, 2)}\n`
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.writeFile(filePath, formatted, { encoding: 'utf8', flag: flags })
+}
+
+export async function acquireRunLock(lockFile, lockState) {
+  const desired = {
+    runId: String(lockState?.runId ?? ''),
+    pid: normalizePid(lockState?.pid),
+    startedAt: String(lockState?.startedAt ?? timestamp()),
+    heartbeatAt: String(lockState?.heartbeatAt ?? timestamp()),
+    status: String(lockState?.status ?? 'starting'),
+    iteration: Number.isFinite(Number(lockState?.iteration)) ? Number(lockState.iteration) : 0,
+    phase: String(lockState?.phase ?? ''),
+    task: String(lockState?.task ?? ''),
+    mode: String(lockState?.mode ?? ''),
+    configFile: String(lockState?.configFile ?? ''),
+    cwd: String(lockState?.cwd ?? ''),
+  }
+
+  await fs.mkdir(path.dirname(lockFile), { recursive: true })
+
+  try {
+    await writeJsonFile(lockFile, desired, 'wx')
+    return { acquired: true, staleLock: null }
+  } catch (error) {
+    if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'EEXIST') {
+      throw error
+    }
+  }
+
+  const existing = await readJsonFile(lockFile, null)
+  const existingPid = normalizePid(existing?.pid)
+  if (existing && existingPid > 0 && isProcessRunning(existingPid) && existingPid !== process.pid) {
+    throw new Error(
+      `Another pi-harness run is active (runId=${String(existing.runId ?? '')} pid=${existingPid} startedAt=${String(existing.startedAt ?? '')}).`
+    )
+  }
+
+  await fs.rm(lockFile, { force: true })
+
+  try {
+    await writeJsonFile(lockFile, desired, 'wx')
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
+      const current = await readJsonFile(lockFile, null)
+      throw new Error(
+        `Another pi-harness run acquired the lock first (runId=${String(current?.runId ?? '')} pid=${String(current?.pid ?? '')}).`
+      )
+    }
+    throw error
+  }
+
+  return { acquired: true, staleLock: existing }
+}
+
+export async function updateRunLock(lockFile, lockState) {
+  const current = await readJsonFile(lockFile, null)
+  if (!current) {
+    return false
+  }
+
+  const next = {
+    ...current,
+    ...lockState,
+    pid: normalizePid(lockState?.pid ?? current.pid),
+    heartbeatAt: String(lockState?.heartbeatAt ?? timestamp()),
+  }
+  await writeJsonFile(lockFile, next)
+  return true
+}
+
+export async function releaseRunLock(lockFile, runId) {
+  const current = await readJsonFile(lockFile, null)
+  if (!current) {
+    return false
+  }
+
+  if (String(current.runId ?? '') !== String(runId ?? '')) {
+    return false
+  }
+
+  await fs.rm(lockFile, { force: true })
+  return true
+}
+
+export function signalProcessTree(pid, signal) {
+  const normalizedPid = normalizePid(pid)
+  if (normalizedPid <= 0) {
+    return false
+  }
+
+  try {
+    if (process.platform !== 'win32') {
+      process.kill(-normalizedPid, signal)
+    } else {
+      process.kill(normalizedPid, signal)
+    }
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function readSessionId(sessionFile) {
@@ -297,6 +471,7 @@ export async function runShellCommand({
     const child = spawn('/bin/zsh', ['-lc', command], {
       cwd,
       env: process.env,
+      detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
@@ -308,9 +483,9 @@ export async function runShellCommand({
 
     killTimer = setTimeout(() => {
       timedOut = true
-      child.kill('SIGTERM')
+      signalProcessTree(child.pid, 'SIGTERM')
       forceKillTimer = setTimeout(() => {
-        child.kill('SIGKILL')
+        signalProcessTree(child.pid, 'SIGKILL')
       }, 10000)
     }, timeoutSeconds * 1000)
 

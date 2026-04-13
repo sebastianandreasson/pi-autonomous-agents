@@ -5,7 +5,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-import { collectLargeFileWarnings, listChangedFiles } from '../src/pi-repo.mjs'
+import {
+  acquireRunLock,
+  collectLargeFileWarnings,
+  listChangedFiles,
+  readJsonFile,
+  releaseRunLock,
+} from '../src/pi-repo.mjs'
 
 async function makeTempRepo() {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-repo-'))
@@ -56,4 +62,67 @@ test('collectLargeFileWarnings flags oversized source and spec files', async () 
     { file: 'src/huge.ts', lineCount: 521, kind: 'large_file' },
     { file: 'e2e/huge.spec.ts', lineCount: 321, kind: 'large_spec' },
   ])
+})
+
+test('acquireRunLock creates and releases an active-run lock', async () => {
+  const cwd = await makeTempRepo()
+  const lockFile = path.join(cwd, '.pi-runtime', 'active-run.json')
+
+  const result = await acquireRunLock(lockFile, {
+    runId: 'run-1',
+    pid: process.pid,
+    startedAt: '2026-04-13T00:00:00.000Z',
+    heartbeatAt: '2026-04-13T00:00:00.000Z',
+    status: 'starting',
+    cwd,
+  })
+
+  assert.equal(result.acquired, true)
+  assert.equal(result.staleLock, null)
+  assert.deepEqual(await readJsonFile(lockFile, null), {
+    runId: 'run-1',
+    pid: process.pid,
+    startedAt: '2026-04-13T00:00:00.000Z',
+    heartbeatAt: '2026-04-13T00:00:00.000Z',
+    status: 'starting',
+    iteration: 0,
+    phase: '',
+    task: '',
+    mode: '',
+    configFile: '',
+    cwd,
+  })
+
+  assert.equal(await releaseRunLock(lockFile, 'run-1'), true)
+  assert.equal(await readJsonFile(lockFile, null), null)
+})
+
+test('acquireRunLock recovers a stale lock owned by a dead pid', async () => {
+  const cwd = await makeTempRepo()
+  const lockFile = path.join(cwd, '.pi-runtime', 'active-run.json')
+  await fs.mkdir(path.dirname(lockFile), { recursive: true })
+  await fs.writeFile(lockFile, `${JSON.stringify({
+    runId: 'stale-run',
+    pid: 999999,
+    startedAt: '2026-04-13T00:00:00.000Z',
+    heartbeatAt: '2026-04-13T00:10:00.000Z',
+    status: 'iteration_in_progress',
+    iteration: 23,
+    phase: 'Phase 10',
+    task: 'Stale task',
+    cwd,
+  }, null, 2)}\n`, 'utf8')
+
+  const result = await acquireRunLock(lockFile, {
+    runId: 'fresh-run',
+    pid: process.pid,
+    startedAt: '2026-04-13T01:00:00.000Z',
+    heartbeatAt: '2026-04-13T01:00:00.000Z',
+    status: 'starting',
+    cwd,
+  })
+
+  assert.equal(result.acquired, true)
+  assert.equal(result.staleLock.runId, 'stale-run')
+  assert.equal((await readJsonFile(lockFile, null)).runId, 'fresh-run')
 })

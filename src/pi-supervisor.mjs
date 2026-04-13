@@ -12,9 +12,11 @@ import {
 } from './pi-prompts.mjs'
 import { appendTelemetry, ensureTelemetryFiles } from './pi-telemetry.mjs'
 import {
+  acquireRunLock,
   appendLog,
   collectLargeFileWarnings,
   commitStagedFiles,
+  createRunId,
   didRepoChange,
   ensureFileExists,
   ensureRepo,
@@ -25,10 +27,12 @@ import {
   readOptionalTextFile,
   readSessionId,
   readState,
+  releaseRunLock,
   runVerification,
   runShellCommand,
   stageFiles,
   unstageFiles,
+  updateRunLock,
   runVisualCapture,
   timestamp,
   writeChangedFiles,
@@ -66,7 +70,7 @@ function printTerminalSummary(config, summary) {
   }
 
   const lines = [
-    `[PI supervisor] iteration=${summary.iteration} phase="${summary.phase}"`,
+    `[PI supervisor] run_id=${summary.runId || config.runId || ''} iteration=${summary.iteration} phase="${summary.phase}"`,
     `[PI supervisor] task=${summary.taskFile || toDisplayPath(config, config.taskFile)} developer_instructions=${summary.developerInstructionsFile || toDisplayPath(config, config.developerInstructionsFile)} tester_instructions=${summary.testerInstructionsFile || toDisplayPath(config, config.testerInstructionsFile)}`,
     `[PI supervisor] transport=${config.transport} developer_model=${summary.developerModel || resolveRoleModelName(config, 'developer') || '(PI default)'} tester_model=${summary.testerModel || resolveRoleModelName(config, 'tester') || '(PI default)'}`,
     `[PI supervisor] developer=${summary.developerStatus} tester=${summary.testerStatus} verification=${summary.verificationStatus}`,
@@ -152,9 +156,13 @@ function formatIterationSummary(summary) {
 
 async function writeIterationSummary(config, summary) {
   await writeTextFile(config.lastIterationSummaryFile, formatIterationSummary(summary))
+  if (config.runLastIterationSummaryFile && config.runLastIterationSummaryFile !== config.lastIterationSummaryFile) {
+    await writeTextFile(config.runLastIterationSummaryFile, formatIterationSummary(summary))
+  }
 }
 
 function createIterationSummary({
+  runId,
   iteration,
   phase,
   task,
@@ -174,6 +182,7 @@ function createIterationSummary({
   visualModel,
 }) {
   return {
+    runId,
     iteration,
     phase,
     task,
@@ -192,6 +201,26 @@ function createIterationSummary({
     testerModel,
     visualModel,
   }
+}
+
+async function persistStateSnapshot(config, state) {
+  await writeState(config.stateFile, state)
+  if (config.runStateFile && config.runStateFile !== config.stateFile) {
+    await writeState(config.runStateFile, state)
+  }
+}
+
+async function updateRunOwnership(config, fields = {}) {
+  if (!config.activeRunFile || !config.runId) {
+    return
+  }
+
+  await updateRunLock(config.activeRunFile, {
+    runId: config.runId,
+    pid: process.pid,
+    heartbeatAt: timestamp(),
+    ...fields,
+  })
 }
 
 function didInvocationCreateCommit(invocation) {
@@ -272,6 +301,7 @@ function isInfrastructureVerificationFailure(output) {
 async function recordEvent(config, event) {
   await appendTelemetry(config, {
     timestamp: timestamp(),
+    runId: config.runId || '',
     ...event,
   })
 }
@@ -1076,6 +1106,13 @@ async function runIteration({ config, state, iteration }) {
   const iterationStartSnapshot = getRepoSnapshot(config.cwd)
   const taskInfo = findFirstUncheckedTaskInfo(config.taskFile)
   if (!taskInfo.hasUncheckedTasks) {
+    await updateRunOwnership(config, {
+      status: 'idle',
+      iteration,
+      phase: taskInfo.phase || 'complete',
+      task: '',
+      lastCompletedIteration: iteration,
+    })
     await appendLog(config.logFile, 'No unchecked tasks remain in TODOS.md')
     return {
       stateUpdate: {
@@ -1086,9 +1123,12 @@ async function runIteration({ config, state, iteration }) {
         lastPhase: taskInfo.phase,
         lastStatus: 'complete',
         lastVerificationStatus: 'not_needed',
+        runId: config.runId || '',
+        inProgress: null,
         lastRunAt: timestamp(),
       },
       summary: {
+        runId: config.runId || '',
         iteration,
         phase: taskInfo.phase || 'complete',
         task: '',
@@ -1118,6 +1158,26 @@ async function runIteration({ config, state, iteration }) {
 
   const phase = taskInfo.phase || 'unknown'
   const task = taskInfo.task || 'unknown'
+  const inProgressState = {
+    ...state,
+    runId: config.runId || '',
+    inProgress: {
+      runId: config.runId || '',
+      status: 'in_progress',
+      iteration,
+      phase,
+      task,
+      startedAt: timestamp(),
+      transport: config.transport,
+    },
+  }
+  await persistStateSnapshot(config, inProgressState)
+  await updateRunOwnership(config, {
+    status: 'iteration_in_progress',
+    iteration,
+    phase,
+    task,
+  })
   const canResumePriorSession = (
     state.lastTransport === config.transport
     && state.lastPiModel === developerModelName
@@ -1486,7 +1546,18 @@ async function runIteration({ config, state, iteration }) {
     lastRunAt: timestamp(),
     successfulIterations,
     lastVisualStatus: visualStatus,
+    runId: config.runId || '',
+    inProgress: null,
   }
+
+  await updateRunOwnership(config, {
+    status: 'idle',
+    iteration,
+    phase,
+    task,
+    lastCompletedIteration: iteration,
+    lastStatus: finalStatus,
+  })
 
   await appendLog(
     config.logFile,
@@ -1495,6 +1566,7 @@ async function runIteration({ config, state, iteration }) {
 
   const iterationEndSnapshot = getRepoSnapshot(config.cwd)
   const iterationSummary = createIterationSummary({
+    runId: config.runId || '',
     iteration,
     phase,
     task,
@@ -1548,6 +1620,7 @@ async function runIteration({ config, state, iteration }) {
   return {
     stateUpdate: nextState,
     summary: {
+      runId: config.runId || '',
       iteration,
       phase,
       task,
@@ -1578,40 +1651,95 @@ async function runIteration({ config, state, iteration }) {
 
 async function main() {
   const config = loadConfig(process.argv[2] ?? 'once')
+  const runId = createRunId()
+  const runStartedAt = timestamp()
+  const runDir = path.join(config.piRuntimeDir, 'runs', runId)
+  config.runId = runId
+  config.runStartedAt = runStartedAt
+  config.runRuntimeDir = runDir
+  config.runLogFile = path.join(runDir, 'pi.log')
+  config.runTelemetryJsonl = path.join(runDir, 'pi_telemetry.jsonl')
+  config.runTelemetryCsv = path.join(runDir, 'pi_telemetry.csv')
+  config.runStateFile = path.join(runDir, 'state.json')
+  config.runLastIterationSummaryFile = path.join(runDir, 'last-iteration.json')
+
   ensureRepo(config.cwd)
   await ensureFileExists(config.taskFile, 'task file')
   await ensureFileExists(config.developerInstructionsFile, 'developer instructions file')
   await ensureFileExists(config.testerInstructionsFile, 'tester instructions file')
-  await ensureTelemetryFiles(config)
-  await runStartupPreflight(config)
+  const lockResult = await acquireRunLock(config.activeRunFile, {
+    runId,
+    pid: process.pid,
+    startedAt: runStartedAt,
+    heartbeatAt: runStartedAt,
+    status: 'starting',
+    iteration: 0,
+    phase: '',
+    task: '',
+    mode: config.mode,
+    configFile: config.configFile,
+    cwd: config.cwd,
+  })
+  try {
+    process.env.PI_RUN_ID = runId
+    process.env.PI_RUN_LOG_FILE = config.runLogFile
+    await ensureTelemetryFiles(config)
+    await appendLog(config.logFile, `Run started pid=${process.pid} mode=${config.mode}`)
+    if (lockResult.staleLock) {
+      await appendLog(
+        config.logFile,
+        `Recovered stale run lock from runId=${String(lockResult.staleLock.runId ?? '')} pid=${String(lockResult.staleLock.pid ?? '')} startedAt=${String(lockResult.staleLock.startedAt ?? '')}`
+      )
+    }
+    await runStartupPreflight(config)
 
-  let state = await readState(config.stateFile)
-  let completedIterations = 0
+    let state = await readState(config.stateFile)
+    if (state?.inProgress?.status === 'in_progress') {
+      await appendLog(
+        config.logFile,
+        `Recovering unfinished iteration=${state.inProgress.iteration} phase="${state.inProgress.phase || ''}" task="${state.inProgress.task || ''}" from runId=${String(state.inProgress.runId || state.runId || '')}`
+      )
+    }
+    let completedIterations = 0
 
-  while (!stopRequested) {
-    const iteration = state.iteration + 1
-    const result = await runIteration({ config, state, iteration })
-    await writeIterationSummary(config, result.iterationSummary ?? result.summary)
-    state = result.stateUpdate
-    await writeState(config.stateFile, state)
-    printTerminalSummary(config, result.summary)
-    completedIterations += 1
+    while (!stopRequested) {
+      const iteration = state?.inProgress?.status === 'in_progress'
+        ? Number(state.inProgress.iteration) || (state.iteration + 1)
+        : state.iteration + 1
+      await updateRunOwnership(config, {
+        status: 'starting_iteration',
+        iteration,
+      })
+      const result = await runIteration({ config, state, iteration })
+      await writeIterationSummary(config, result.iterationSummary ?? result.summary)
+      state = result.stateUpdate
+      await persistStateSnapshot(config, state)
+      printTerminalSummary(config, result.summary)
+      completedIterations += 1
 
-    if (result.shouldStop || config.mode !== 'run' || completedIterations >= config.maxIterations) {
-      break
+      if (result.shouldStop || config.mode !== 'run' || completedIterations >= config.maxIterations) {
+        break
+      }
+
+      await sleep(config.sleepBetweenSeconds)
     }
 
-    await sleep(config.sleepBetweenSeconds)
-  }
-
-  if (stopRequested) {
-    await appendLog(config.logFile, 'Stop requested by signal')
+    if (stopRequested) {
+      await appendLog(config.logFile, 'Stop requested by signal')
+    }
+  } finally {
+    await updateRunOwnership(config, {
+      status: stopRequested ? 'stopped' : 'finished',
+      heartbeatAt: timestamp(),
+    })
+    await releaseRunLock(config.activeRunFile, runId)
+    delete process.env.PI_RUN_ID
+    delete process.env.PI_RUN_LOG_FILE
   }
 }
 
 main().catch(async (error) => {
   const config = loadConfig(process.argv[2] ?? 'once')
-  await ensureTelemetryFiles(config)
   await appendLog(config.logFile, `Supervisor error: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
   console.error(error instanceof Error ? error.message : String(error))
   process.exitCode = 1
