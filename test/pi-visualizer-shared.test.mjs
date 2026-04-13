@@ -44,6 +44,9 @@ test('builds flow snapshot with active and completed steps', () => {
       { iteration: 2, kind: 'developer_verification', status: 'passed' },
       { iteration: 2, kind: 'tester_agent', status: 'success' },
     ],
+    options: {
+      includeVisualReview: false,
+    },
   })
 
   assert.equal(flow.iteration, 2)
@@ -51,6 +54,30 @@ test('builds flow snapshot with active and completed steps', () => {
   assert.equal(flow.steps.find((step) => step.key === 'developer')?.status, 'done')
   assert.equal(flow.steps.find((step) => step.key === 'verification')?.status, 'done')
   assert.equal(flow.steps.find((step) => step.key === 'tester')?.status, 'active')
+  assert.equal(flow.steps.find((step) => step.key === 'developer')?.durationSeconds, null)
+})
+
+
+test('keeps active step start time and completed duration in flow snapshot', () => {
+  const flow = deriveFlowSnapshot({
+    activeRun: {
+      iteration: 2,
+      activeKind: 'tester_agent',
+      activeStartedAt: '2026-04-13T12:00:00.000Z',
+    },
+    summary: null,
+    telemetry: [
+      { iteration: 2, kind: 'main_agent', status: 'success', durationSeconds: 14 },
+      { iteration: 2, kind: 'developer_verification', status: 'passed', durationSeconds: 3 },
+    ],
+    options: {
+      includeVisualReview: false,
+    },
+  })
+
+  assert.equal(flow.steps.find((step) => step.key === 'developer')?.durationSeconds, 14)
+  assert.equal(flow.steps.find((step) => step.key === 'verification')?.durationSeconds, 3)
+  assert.equal(flow.steps.find((step) => step.key === 'tester')?.activeStartedAt, '2026-04-13T12:00:00.000Z')
 })
 
 test('formats active label from flow state', () => {
@@ -58,8 +85,26 @@ test('formats active label from flow state', () => {
     activeRun: { iteration: 1, activeKind: 'visual_capture' },
     summary: null,
     telemetry: [],
+    options: {
+      includeVisualReview: true,
+    },
   })
-  assert.equal(formatActiveLabel({ activeKind: 'visual_capture' }, flow), 'Visual Capture')
+  assert.equal(formatActiveLabel({ activeKind: 'visual_capture' }, flow, { includeVisualReview: true }), 'Visual Capture')
+})
+
+
+test('hides visual steps when visual review is disabled', () => {
+  const flow = deriveFlowSnapshot({
+    activeRun: { iteration: 1, activeKind: 'tester_agent' },
+    summary: null,
+    telemetry: [],
+    options: {
+      includeVisualReview: false,
+    },
+  })
+
+  assert.equal(flow.steps.some((step) => step.key === 'visual_capture'), false)
+  assert.equal(flow.steps.some((step) => step.key === 'visual_review'), false)
 })
 
 test('builds stage graph for current iteration timeline', () => {
@@ -71,6 +116,9 @@ test('builds stage graph for current iteration timeline', () => {
       { iteration: 3, kind: 'developer_verification', status: 'failed', retryCount: 0 },
       { iteration: 3, kind: 'fix_agent', status: 'success', retryCount: 0 },
     ],
+    options: {
+      includeVisualReview: false,
+    },
   })
 
   assert.equal(graph.iteration, 3)

@@ -23,13 +23,14 @@
     "test": "node --test test/pi-heartbeat.test.mjs test/pi-lifecycle.test.mjs test/pi-role-models.test.mjs test/pi-flow.test.mjs test/pi-history.test.mjs test/pi-prompts.test.mjs test/pi-preflight.test.mjs test/pi-repo.test.mjs test/pi-sdk-supervisor.test.mjs test/pi-sdk-turn.test.mjs test/pi-telemetry.test.mjs test/pi-visualizer-shared.test.mjs",
     "debug:live-ui": "node src/cli.mjs debug-live --reset",
     "dev:visualizer:ui": "npm --prefix visualizer-ui run dev",
-    "build:visualizer:ui": "npm --prefix visualizer-ui run build"
+    "build:visualizer:ui": "npm --prefix visualizer-ui run build",
+    "prepublishOnly": "npm run check && npm test && npm run build:visualizer:ui"
   },
   "files": [
     "src",
     "templates",
     "docs",
-    "visualizer-ui",
+    "visualizer-ui/dist",
     "pi.config.json",
     "SETUP.md",
     "README.md"

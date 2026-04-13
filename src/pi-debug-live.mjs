@@ -12,9 +12,49 @@ const cliFile = path.join(scriptDir, 'cli.mjs')
 const fakePiFile = path.join(packageRoot, 'test', 'fixtures', 'fake-pi.mjs')
 const fakeLiveSdkFile = path.join(packageRoot, 'test', 'fixtures', 'fake-live-pi-sdk.mjs')
 const sandboxDir = path.join(packageRoot, '.pi-debug', 'live-ui')
+const DEFAULT_TASK_COUNT = 12
 
 function shellQuote(value) {
   return JSON.stringify(String(value))
+}
+
+function readFlagValue(flag) {
+  const index = process.argv.indexOf(flag)
+  if (index === -1) {
+    return ''
+  }
+  return String(process.argv[index + 1] ?? '').trim()
+}
+
+function readScenario() {
+  const value = readFlagValue('--scenario') || process.env.PI_FAKE_LIVE_SCENARIO || 'default'
+  return String(value).trim() || 'default'
+}
+
+function readTaskCount() {
+  const raw = Number.parseInt(readFlagValue('--task-count') || process.env.PI_DEBUG_TASK_COUNT || `${DEFAULT_TASK_COUNT}`, 10)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TASK_COUNT
+}
+
+function buildTodoLines(taskCount) {
+  const lines = []
+  for (let index = 1; index <= taskCount; index += 1) {
+    const phase = index <= Math.ceil(taskCount / 3)
+      ? 'Phase 1'
+      : index <= Math.ceil((taskCount * 2) / 3)
+        ? 'Phase 2'
+        : 'Phase 3'
+    const label = `Fake live task ${index}`
+    if (lines.length === 0 || lines[lines.length - 1] !== `## ${phase}`) {
+      if (lines.length > 0) {
+        lines.push('')
+      }
+      lines.push(`## ${phase}`)
+      lines.push('')
+    }
+    lines.push(`- [ ] ${label}`)
+  }
+  return `${lines.join('\n')}\n`
 }
 
 async function ensureRepo(cwd) {
@@ -27,21 +67,11 @@ async function ensureRepo(cwd) {
   }
 }
 
-async function seedFiles(cwd) {
+async function seedFiles(cwd, { taskCount, scenario }) {
   await fs.mkdir(path.join(cwd, 'pi'), { recursive: true })
-  await fs.writeFile(path.join(cwd, 'TODOS.md'), [
-    '## Phase 1',
-    '',
-    '- [ ] Fake live task one',
-    '- [ ] Fake live task two',
-    '- [ ] Fake live task three',
-    '',
-    '## Phase 2',
-    '',
-    '- [ ] Fake live task four',
-  ].join('\n') + '\n', 'utf8')
-  await fs.writeFile(path.join(cwd, 'DEVELOPER.md'), 'Developer instructions for local visualizer debugging.\n', 'utf8')
-  await fs.writeFile(path.join(cwd, 'TESTER.md'), 'Tester instructions for local visualizer debugging.\n', 'utf8')
+  await fs.writeFile(path.join(cwd, 'TODOS.md'), buildTodoLines(taskCount), 'utf8')
+  await fs.writeFile(path.join(cwd, 'DEVELOPER.md'), `Developer instructions for local visualizer debugging.\nScenario: ${scenario}\n`, 'utf8')
+  await fs.writeFile(path.join(cwd, 'TESTER.md'), `Tester instructions for local visualizer debugging.\nScenario: ${scenario}\n`, 'utf8')
   await fs.writeFile(path.join(cwd, 'pi.config.json'), `${JSON.stringify({
     transport: 'sdk',
     taskFile: 'TODOS.md',
@@ -63,7 +93,7 @@ async function seedFiles(cwd) {
     toolContinueAfterSeconds: 3600,
     toolNoEventTimeoutSeconds: 3600,
     sleepBetweenSeconds: 1,
-    maxIterations: 20,
+    maxIterations: Math.max(taskCount * 3, 20),
   }, null, 2)}\n`, 'utf8')
 }
 
@@ -78,17 +108,22 @@ async function ensureInitialCommit(cwd) {
 
 async function main() {
   const reset = process.argv.includes('--reset')
+  const scenario = readScenario()
+  const taskCount = readTaskCount()
+
   if (reset) {
     await fs.rm(sandboxDir, { recursive: true, force: true })
   }
 
   await fs.mkdir(sandboxDir, { recursive: true })
   await ensureRepo(sandboxDir)
-  await seedFiles(sandboxDir)
+  await seedFiles(sandboxDir, { taskCount, scenario })
   await ensureInitialCommit(sandboxDir)
 
   process.stdout.write(`PI debug sandbox: ${sandboxDir}\n`)
   process.stdout.write(`Using fake live SDK fixture: ${fakeLiveSdkFile}\n`)
+  process.stdout.write(`Scenario: ${scenario}\n`)
+  process.stdout.write(`Task count: ${taskCount}\n`)
 
   const child = spawn(process.execPath, [cliFile, 'run'], {
     cwd: sandboxDir,
@@ -96,6 +131,7 @@ async function main() {
       ...process.env,
       PI_CONFIG_FILE: 'pi.config.json',
       PI_SDK_MODULE: fakeLiveSdkFile,
+      PI_FAKE_LIVE_SCENARIO: scenario,
       PI_VISUALIZER_HOST: process.env.PI_VISUALIZER_HOST || '127.0.0.1',
       PI_VISUALIZER_PORT: process.env.PI_VISUALIZER_PORT || '4317',
     },

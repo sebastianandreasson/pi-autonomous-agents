@@ -62,7 +62,7 @@ The package reads `PI_CONFIG_FILE` if provided. Otherwise it falls back to the b
 
 Visualizer reads active-run lock, TODO file, per-run state, per-run iteration summary, per-run last output snapshot, live feed JSONL, and telemetry to show current stage plus historical runs.
 
-For local UI iteration in this package repo, use `pi-harness debug-live` to run against seeded fake live SDK sandbox.
+For local UI iteration in this package repo, use `pi-harness debug-live` to run against seeded fake live SDK sandbox. Useful variants: `--scenario noisy`, `--scenario retry`, `--task-count 24`.
 
 ## Config Contract
 

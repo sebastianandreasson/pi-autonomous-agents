@@ -326,6 +326,13 @@ For local visualizer iteration against fake live SDK agent:
 npm run debug:live-ui
 ```
 
+Scenario variants:
+
+```bash
+node src/cli.mjs debug-live --reset --scenario noisy --task-count 24
+node src/cli.mjs debug-live --reset --scenario retry
+```
+
 For React/Vite visualizer UI dev loop:
 
 ```bash
@@ -337,6 +344,8 @@ For production visualizer UI build:
 ```bash
 npm run build:visualizer:ui
 ```
+
+Publish now auto-runs check, tests, and UI build via `prepublishOnly`.
 
 This seeds `.pi-debug/live-ui/`, runs harness there with streaming fake SDK fixture, hosts visualizer, and gives stable local repro loop for UI work. React app lives in `visualizer-ui/`. Visualizer server now serves built assets from `visualizer-ui/dist/` and falls back to build-instructions page if build artifacts are missing.
 

@@ -13,6 +13,15 @@
 }
 
 * { box-sizing: border-box; }
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
 
 html, body, #root {
   min-height: 100%;
@@ -151,19 +160,38 @@ select {
   overflow: auto;
   padding-right: 4px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   margin-top: 12px;
+}
+
+.todo-group {
+  display: grid;
+  gap: 6px;
+}
+
+.todo-group-heading {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 2px;
+}
+
+.todo-group-items {
+  display: grid;
+  gap: 6px;
 }
 
 .todo-item {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--panel);
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: flex-start;
-  padding: 12px 14px;
+  padding: 9px 11px;
   text-align: left;
   cursor: pointer;
 }
@@ -176,21 +204,18 @@ select {
 .todo-line {
   color: var(--muted);
   font-size: 11px;
-  min-width: 52px;
+  min-width: 36px;
+  line-height: 1.2;
 }
 
 .todo-content {
   flex: 1;
+  min-width: 0;
 }
 
 .todo-task {
   font-weight: 600;
-}
-
-.todo-phase {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
+  line-height: 1.25;
 }
 
 .todo-checked {
@@ -215,6 +240,19 @@ select {
   overflow: hidden;
 }
 
+.step {
+  width: 100%;
+  text-align: left;
+}
+
+.step.clickable {
+  cursor: pointer;
+}
+
+.step.selected {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset;
+}
+
 .step::before,
 .graph-node::before {
   content: "";
@@ -222,6 +260,12 @@ select {
   inset: 0 auto 0 0;
   width: 4px;
   background: var(--pending);
+}
+
+.step.active,
+.graph-node.active {
+  border-color: var(--active);
+  box-shadow: 0 0 0 1px rgba(110, 231, 255, 0.35) inset, 0 0 28px rgba(110, 231, 255, 0.12);
 }
 
 .step.active::before,
@@ -259,6 +303,24 @@ select {
   margin-top: 12px;
 }
 
+.step-details-card {
+  margin-top: 12px;
+}
+
+.step-details-summary {
+  margin-top: 8px;
+  font-weight: 700;
+}
+
+.step-details-meta,
+.step-details-section {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .state-chip {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -282,6 +344,25 @@ select {
   align-items: center;
   color: var(--muted);
   font-size: 12px;
+}
+
+.feed-jump-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.feed-jump-button {
+  border: 1px solid var(--line);
+  background: rgba(110, 231, 255, 0.08);
+  color: var(--active);
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.feed-jump-button:hover {
+  background: rgba(110, 231, 255, 0.14);
 }
 
 .feed {
@@ -463,10 +544,16 @@ tr[data-clickable="1"] {
 }
 
 .edit-head {
+  display: block;
+  list-style: none;
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.03);
   font-weight: 600;
   cursor: pointer;
+}
+
+.edit-head::-webkit-details-marker {
+  display: none;
 }
 
 .muted {

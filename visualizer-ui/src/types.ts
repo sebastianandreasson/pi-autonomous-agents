@@ -39,10 +39,17 @@ export type FlowStep = {
   label: string
   status: 'pending' | 'active' | 'done' | 'error' | 'skipped' | string
   latestEvent?: {
+    _vizId?: string
     kind?: string
     status?: string
     terminalReason?: string
+    durationSeconds?: number
+    notes?: string
+    outputExcerpt?: string
   }
+  latestEventId?: string
+  activeStartedAt?: string
+  durationSeconds?: number | null
 }
 
 export type FlowSnapshot = {
@@ -89,6 +96,9 @@ export type TelemetryEvent = {
   kind?: string
   status?: string
   notes?: string
+  outputExcerpt?: string
+  durationSeconds?: number
+  terminalReason?: string
 }
 
 export type VisualizerSnapshot = {

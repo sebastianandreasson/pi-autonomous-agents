@@ -5,6 +5,7 @@ import path from 'node:path'
 import {
   buildMainPrompt,
   buildTesterPrompt,
+  classifyTaskType,
 } from '../src/pi-prompts.mjs'
 
 const cwd = '/tmp/example-repo'
@@ -98,4 +99,23 @@ test('tester prompt includes large-file risk hint when relevant', () => {
 
   assert.match(prompt, /Large file risk in touched files:/)
   assert.match(prompt, /src\/huge\.ts \(612 lines\)/)
+})
+
+test('classifyTaskType marks test-focused TODOs', () => {
+  assert.equal(classifyTaskType('Write regression test for login redirect'), 'test')
+  assert.equal(classifyTaskType('Add coverage for flood warning banner'), 'test')
+  assert.equal(classifyTaskType('Implement flood map legend'), 'general')
+})
+
+test('tester prompt adds guidance for test-focused tasks', () => {
+  const prompt = buildTesterPrompt(baseConfig, {
+    phase: 'Phase 1',
+    task: 'Write regression test for login redirect',
+    changedFiles: ['test/login.test.ts'],
+    developerNotes: 'Added failing test first.',
+  })
+
+  assert.match(prompt, /Current task type: test-focused/)
+  assert.match(prompt, /Do not fail solely because changes are mostly or entirely tests\./)
+  assert.match(prompt, /PASS if the new or updated test adds meaningful behavioral or regression coverage and verification passes\./)
 })

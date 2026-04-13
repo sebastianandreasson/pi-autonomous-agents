@@ -1,10 +1,23 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
+
+const STICKY_BOTTOM_THRESHOLD_PX = 40
 import type { LiveFeedEntry } from '../types'
 
 type NormalizedFeedEntry = LiveFeedEntry & {
   type: string
   text: string
   count: number
+}
+
+function compareFeedEntries(left: LiveFeedEntry, right: LiveFeedEntry) {
+  const leftSeq = Number(left.seq ?? Number.NaN)
+  const rightSeq = Number(right.seq ?? Number.NaN)
+  const leftHasSeq = Number.isFinite(leftSeq)
+  const rightHasSeq = Number.isFinite(rightSeq)
+  if (leftHasSeq && rightHasSeq && leftSeq !== rightSeq) {
+    return leftSeq - rightSeq
+  }
+  return String(left.timestamp || '').localeCompare(String(right.timestamp || ''))
 }
 
 function normalizeFeedEntry(entry: LiveFeedEntry): NormalizedFeedEntry {
@@ -44,7 +57,7 @@ function entryKey(entry: NormalizedFeedEntry, index: number) {
 }
 
 function PinnedTool({ feed }: { feed: LiveFeedEntry[] }) {
-  const latest = [...feed].reverse().find((entry) => {
+  const latest = [...feed].sort(compareFeedEntries).reverse().find((entry) => {
     return entry.type === 'tool_start' || entry.type === 'tool_update' || entry.type === 'tool_end'
   })
 
@@ -79,9 +92,12 @@ export function LiveFeed({
   onCollapseDeltasChange,
 }: LiveFeedProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false)
 
   const visibleFeed = useMemo(() => {
-    const filtered = feed.filter((entry) => showThinking || entry.type !== 'thinking_delta')
+    const sorted = [...feed].sort(compareFeedEntries)
+    const filtered = sorted.filter((entry) => showThinking || entry.type !== 'thinking_delta')
     return collapseDeltas ? collapseFeedEntries(filtered) : filtered.map(normalizeFeedEntry)
   }, [collapseDeltas, feed, showThinking])
 
@@ -90,11 +106,30 @@ export function LiveFeed({
     if (!node) {
       return
     }
-    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight
-    if (distanceFromBottom < 40) {
+    if (stickToBottomRef.current) {
       node.scrollTop = node.scrollHeight
     }
   }, [visibleFeed])
+
+  useEffect(() => {
+    const node = containerRef.current
+    if (!node) {
+      return
+    }
+
+    const updateStickyState = () => {
+      const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight
+      const stickToBottom = distanceFromBottom < STICKY_BOTTOM_THRESHOLD_PX
+      stickToBottomRef.current = stickToBottom
+      setShowJumpToLatest(!stickToBottom)
+    }
+
+    updateStickyState()
+    node.addEventListener('scroll', updateStickyState, { passive: true })
+    return () => {
+      node.removeEventListener('scroll', updateStickyState)
+    }
+  }, [])
 
   return (
     <>
@@ -116,6 +151,26 @@ export function LiveFeed({
           <span>Collapse deltas</span>
         </label>
       </div>
+
+      {showJumpToLatest ? (
+        <div className="feed-jump-row">
+          <button
+            type="button"
+            className="feed-jump-button"
+            onClick={() => {
+              const node = containerRef.current
+              if (!node) {
+                return
+              }
+              node.scrollTop = node.scrollHeight
+              stickToBottomRef.current = true
+              setShowJumpToLatest(false)
+            }}
+          >
+            Jump to latest
+          </button>
+        </div>
+      ) : null}
 
       <div ref={containerRef} className="feed">
         {visibleFeed.length > 0 ? visibleFeed.map((entry, index) => {

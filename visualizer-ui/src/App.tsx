@@ -3,6 +3,7 @@ import { CurrentEdits } from './components/CurrentEdits'
 import { DiagnosticsPanel } from './components/DiagnosticsPanel'
 import { FlowStrip } from './components/FlowStrip'
 import { LiveFeed } from './components/LiveFeed'
+import { StepDetails } from './components/StepDetails'
 import { TodoList } from './components/TodoList'
 import { getSelectedTodo, useVisualizerStore } from './store'
 import type { TelemetryEvent } from './types'
@@ -12,8 +13,8 @@ function findSelectedEvent(snapshot: ReturnType<typeof useVisualizerStore.getSta
     return null
   }
 
-  return snapshot.graph.nodes.find((node) => node.id === eventId)?.event
-    ?? snapshot.recentTelemetry.find((event) => event._vizId === eventId)
+  return snapshot.graph.nodes.find((node) => node.id === eventId)?.event as Record<string, unknown> | undefined
+    ?? snapshot.recentTelemetry.find((event) => event._vizId === eventId) as Record<string, unknown> | undefined
     ?? null
 }
 
@@ -60,6 +61,8 @@ export default function App() {
     )
   }
 
+  const totalTodos = snapshot.todos.length
+  const completedTodos = snapshot.todos.filter((todo) => todo.checked).length
   const stateChips = [
     ['Current activity', snapshot.flow.activeLabel || 'Idle'],
     ['Iteration', String(snapshot.flow.iteration || '—')],
@@ -99,7 +102,7 @@ export default function App() {
 
       <div className="grid main-grid">
         <div className="card">
-          <div className="label">TODOS</div>
+          <div className="label">TODOS · {completedTodos}/{totalTodos} done</div>
           <TodoList
             todos={snapshot.todos}
             selectedTodoId={selectedTodo?.id || null}
@@ -116,7 +119,12 @@ export default function App() {
                 <div key={label} className="state-chip">{label}: {value}</div>
               ))}
             </div>
-            <FlowStrip flow={snapshot.flow} />
+            <FlowStrip
+              flow={snapshot.flow}
+              selectedEventId={selectedEventId}
+              onSelectStep={setSelectedEventId}
+            />
+            <StepDetails event={selectedEvent} />
             <div className="detail-split">
               <div className="card card-tight no-margin">
                 <div className="label">Live worker feed</div>

@@ -192,6 +192,17 @@ function readRepoDiff(cwd) {
   }
 }
 
+function compareSequencedEntries(left, right) {
+  const leftSeq = Number(left?.seq ?? Number.NaN)
+  const rightSeq = Number(right?.seq ?? Number.NaN)
+  const leftHasSeq = Number.isFinite(leftSeq)
+  const rightHasSeq = Number.isFinite(rightSeq)
+  if (leftHasSeq && rightHasSeq && leftSeq !== rightSeq) {
+    return leftSeq - rightSeq
+  }
+  return String(left?.timestamp ?? '').localeCompare(String(right?.timestamp ?? ''))
+}
+
 function getRunDir(config, runId) {
   return path.join(config.piRuntimeDir, 'runs', runId)
 }
@@ -274,19 +285,26 @@ export async function buildSnapshot(config, queryRunId = '') {
     readJsonlTail(selectedConfig.liveFeedFile, { maxItems: 300, maxBytes: 768 * 1024 }),
   ])
 
-  const recentTelemetry = telemetry.slice(-160).map((event, index) => ({
+  const flowOptions = {
+    includeVisualReview: config.visualReviewEnabled === true,
+  }
+  const telemetryWithVizIds = telemetry.map((event, index) => ({
     ...event,
     _vizId: `telemetry-${index}`,
   }))
+  const sortedLiveFeed = [...liveFeed].sort(compareSequencedEntries)
+  const recentTelemetry = telemetryWithVizIds.slice(-160)
   const flow = deriveFlowSnapshot({
     activeRun: selectedRunId !== '' && String(activeRun?.runId ?? '') === selectedRunId ? activeRun : state?.inProgress ?? null,
     summary,
-    telemetry,
+    telemetry: telemetryWithVizIds,
+    options: flowOptions,
   })
   const graph = deriveStageGraph({
     activeRun: selectedRunId !== '' && String(activeRun?.runId ?? '') === selectedRunId ? activeRun : state?.inProgress ?? null,
     summary,
-    telemetry,
+    telemetry: telemetryWithVizIds,
+    options: flowOptions,
   })
 
   const selectedRunIsActive = selectedRunId !== '' && String(activeRun?.runId ?? '') === selectedRunId
@@ -313,13 +331,13 @@ export async function buildSnapshot(config, queryRunId = '') {
     summary,
     flow: {
       ...flow,
-      activeLabel: formatActiveLabel(activeRun, flow),
+      activeLabel: formatActiveLabel(activeRun, flow, flowOptions),
     },
     graph,
     todos,
     currentEdits,
     lastOutput: currentOutput,
-    liveFeed,
+    liveFeed: sortedLiveFeed,
     recentTelemetry,
   }
 }

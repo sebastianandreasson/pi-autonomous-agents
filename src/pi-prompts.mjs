@@ -119,6 +119,36 @@ function repoInstructionsAuthorityLine(config, instructionsFile, usesBundledInst
   return `Repo-local instructions in ${displayPath(config, instructionsFile)} are the primary role contract. Follow them over package defaults when they differ.\n`
 }
 
+export function classifyTaskType(task) {
+  const text = String(task ?? '').trim().toLowerCase()
+  if (text === '') {
+    return 'general'
+  }
+
+  if (
+    /\b(write|add|create|implement|expand|improve|fix|update)\b.*\b(test|tests|coverage|regression test|spec|specs)\b/.test(text)
+    || /\b(test|tests|coverage|regression test|spec|specs)\b.*\b(write|add|create|implement|expand|improve|fix|update)\b/.test(text)
+  ) {
+    return 'test'
+  }
+
+  return 'general'
+}
+
+function formatTaskTypeGuidance(taskType) {
+  if (taskType !== 'test') {
+    return ''
+  }
+
+  return [
+    'Test-task guidance:',
+    '- This TODO is primarily test-focused. Do not fail solely because changes are mostly or entirely tests.',
+    '- PASS if the new or updated test adds meaningful behavioral or regression coverage and verification passes.',
+    '- FAIL if the test is brittle, redundant, weakly asserted, or not tied to real behavior.',
+    '- Prefer checking whether the test would have failed before the change, or whether developer notes justify why missing coverage mattered.',
+  ].join('\n')
+}
+
 function testerPassOwnershipRules(config) {
   if (config.commitMode === 'plan') {
     return {
@@ -353,6 +383,9 @@ export function buildTesterPrompt(config, {
     developerNotes || '(none provided)',
     configMaxLines(config, 'maxPromptNotesLines', 16),
   )
+  const taskType = classifyTaskType(task)
+  const taskTypeLabel = taskType === 'test' ? 'test-focused' : 'general'
+  const taskTypeGuidance = formatTaskTypeGuidance(taskType)
   const verificationCommand = config.testCommand.trim() === '' ? '(not configured)' : config.testCommand
   const visualCaptureNote = config.visualReviewEnabled
     ? `\n- Keep the screenshot capture flow working so the harness still produces current visual artifacts for review.`
@@ -364,6 +397,7 @@ export function buildTesterPrompt(config, {
   )
   const passOwnership = testerPassOwnershipRules(config)
   const largeFileRiskHint = formatLargeFileRiskHint(largeFileWarnings)
+  const taskTypeRuleBlock = taskTypeGuidance === '' ? '' : `${taskTypeGuidance}\n`
 
   if (!config.usingBundledTesterInstructions) {
     return `Read ${taskFile} and ${instructionsFile}.
@@ -375,6 +409,7 @@ You are the TESTER role. You are reviewing the most recent developer work from a
 
 Current phase: ${phase}
 Current task: ${task}
+Current task type: ${taskTypeLabel}
 Reason for this tester pass: ${reason}
 
 Developer notes:
@@ -391,7 +426,7 @@ Rules:
 - If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
 - If blocked or inconclusive, return VERDICT: BLOCKED.
 - Do not hide real bugs with brittle tests.
-- ${passOwnership.successRule.slice(2)}
+${taskTypeRuleBlock}- ${passOwnership.successRule.slice(2)}
 - ${passOwnership.isolationRule.slice(2)}
 - ${passOwnership.extraRule.slice(2)}${visualCaptureNote}
 
@@ -417,6 +452,7 @@ You are the TESTER role. You are reviewing the most recent developer work from a
 
 Current phase: ${phase}
 Current task: ${task}
+Current task type: ${taskTypeLabel}
 Reason for this tester pass: ${reason}
 
 Developer notes:
@@ -433,7 +469,7 @@ ${indentBlock(innerLoopValidationRules(verificationCommand), '\t')}
 	- Prefer one focused browser-driven review pass.
 	- If a snippet seems incomplete, reread a smaller exact window with read instead of another large overlapping shell range.
 	- Do not hide real bugs with brittle tests.
-	- If blocked or inconclusive, return VERDICT: BLOCKED.
+${taskTypeGuidance === '' ? '' : `${indentBlock(taskTypeGuidance, '\t')}\n`}	- If blocked or inconclusive, return VERDICT: BLOCKED.
 ${indentBlock(passOwnership.successRule, '\t')}
 ${indentBlock(passOwnership.isolationRule, '\t')}
 ${indentBlock(passOwnership.extraRule, '\t')}${visualCaptureNote}

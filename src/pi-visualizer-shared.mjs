@@ -4,8 +4,8 @@ const FLOW_STEPS = [
   { key: 'tester', label: 'Tester' },
   { key: 'fix', label: 'Fix' },
   { key: 'git_finalize', label: 'Git Finalize' },
-  { key: 'visual_capture', label: 'Visual Capture' },
-  { key: 'visual_review', label: 'Visual Review' },
+  { key: 'visual_capture', label: 'Visual Capture', feature: 'visualReview' },
+  { key: 'visual_review', label: 'Visual Review', feature: 'visualReview' },
   { key: 'summary', label: 'Summary' },
 ]
 
@@ -27,8 +27,17 @@ const SUCCESS_STATUSES = new Set(['success', 'passed', 'complete'])
 const ERROR_STATUSES = new Set(['failed', 'timed_out', 'stalled', 'blocked', 'canceled'])
 const SKIP_STATUSES = new Set(['skipped', 'not_run', 'not_needed'])
 
-export function getFlowSteps() {
-  return FLOW_STEPS.map((step) => ({ ...step }))
+function shouldIncludeStep(step, options = {}) {
+  if (step.feature === 'visualReview' && options.includeVisualReview !== true) {
+    return false
+  }
+  return true
+}
+
+export function getFlowSteps(options = {}) {
+  return FLOW_STEPS
+    .filter((step) => shouldIncludeStep(step, options))
+    .map((step) => ({ ...step }))
 }
 
 export function getLabelForKind(kind) {
@@ -124,13 +133,13 @@ export function deriveCurrentIteration({ activeRun, summary, telemetry }) {
   return 0
 }
 
-export function deriveFlowSnapshot({ activeRun, summary, telemetry }) {
+export function deriveFlowSnapshot({ activeRun, summary, telemetry, options = {} }) {
   const currentIteration = deriveCurrentIteration({ activeRun, summary, telemetry })
   const iterationTelemetry = Array.isArray(telemetry)
     ? telemetry.filter((event) => Number(event?.iteration) === currentIteration)
     : []
   const activeStepKey = getStepKeyForActiveRun(activeRun)
-  const steps = FLOW_STEPS.map((step) => {
+  const steps = getFlowSteps(options).map((step) => {
     const matchingEvents = iterationTelemetry.filter((event) => getStepKeyForKind(event?.kind) === step.key)
     const latestEvent = matchingEvents.at(-1) ?? null
     const status = activeStepKey === step.key
@@ -139,10 +148,20 @@ export function deriveFlowSnapshot({ activeRun, summary, telemetry }) {
         ? normalizeEventStatus(latestEvent.status)
         : 'pending'
 
+    const activeStartedAt = activeStepKey === step.key
+      ? String(activeRun?.activeStartedAt ?? '')
+      : ''
+    const durationSeconds = latestEvent && Number.isFinite(Number(latestEvent.durationSeconds))
+      ? Number(latestEvent.durationSeconds)
+      : null
+
     return {
       ...step,
       status,
       latestEvent,
+      latestEventId: String(latestEvent?._vizId ?? ''),
+      activeStartedAt,
+      durationSeconds,
     }
   })
 
@@ -153,8 +172,8 @@ export function deriveFlowSnapshot({ activeRun, summary, telemetry }) {
   }
 }
 
-export function deriveStageGraph({ activeRun, summary, telemetry }) {
-  const flow = deriveFlowSnapshot({ activeRun, summary, telemetry })
+export function deriveStageGraph({ activeRun, summary, telemetry, options = {} }) {
+  const flow = deriveFlowSnapshot({ activeRun, summary, telemetry, options })
   const currentIteration = flow.iteration
   const iterationTelemetry = Array.isArray(telemetry)
     ? telemetry.filter((event) => Number(event?.iteration) === currentIteration)
@@ -196,10 +215,10 @@ export function deriveStageGraph({ activeRun, summary, telemetry }) {
   }
 }
 
-export function formatActiveLabel(activeRun, flow) {
+export function formatActiveLabel(activeRun, flow, options = {}) {
   const activeStepKey = flow?.activeStepKey || getStepKeyForActiveRun(activeRun)
   if (activeStepKey !== '') {
-    const step = FLOW_STEPS.find((entry) => entry.key === activeStepKey)
+    const step = getFlowSteps(options).find((entry) => entry.key === activeStepKey)
     if (step) {
       return step.label
     }

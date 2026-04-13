@@ -1,11 +1,18 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import process from 'node:process'
 import { execFileSync } from 'node:child_process'
 
 let nextSessionNumber = 0
+let retryFailureInjected = false
+let developerTurnCount = 0
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function readScenario() {
+  return String(process.env.PI_FAKE_LIVE_SCENARIO ?? 'default').trim() || 'default'
 }
 
 function createModelRegistry() {
@@ -84,8 +91,7 @@ export const createFindTool = (cwd) => createTool('find', cwd)
 export const createLsTool = (cwd) => createTool('ls', cwd)
 
 async function readTodos(cwd) {
-  const taskFile = path.join(cwd, 'TODOS.md')
-  return await fs.readFile(taskFile, 'utf8')
+  return await fs.readFile(path.join(cwd, 'TODOS.md'), 'utf8')
 }
 
 async function markFirstTodoDone(cwd) {
@@ -100,10 +106,22 @@ function getCurrentTask(raw) {
   return match?.[1]?.trim() || 'unknown task'
 }
 
-async function writeImplementationFile(cwd, taskText) {
+async function writeImplementationFile(cwd, taskText, phase) {
   const stamp = taskText.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'task'
   const filePath = path.join(cwd, `debug-${stamp}.txt`)
-  await fs.writeFile(filePath, `implemented ${taskText}\n`, 'utf8')
+  const lines = [
+    `implemented ${taskText}`,
+    `scenario ${readScenario()}`,
+    `phase ${phase}`,
+  ]
+  await fs.writeFile(filePath, `${lines.join('\n')}\n`, 'utf8')
+  return path.basename(filePath)
+}
+
+async function appendRepairNote(cwd, taskText) {
+  const stamp = taskText.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'task'
+  const filePath = path.join(cwd, `debug-${stamp}.txt`)
+  await fs.appendFile(filePath, 'repair note: tightened behavior after tester failure\n', 'utf8')
   return path.basename(filePath)
 }
 
@@ -131,11 +149,11 @@ function emitText(session, delta) {
   })
 }
 
-function finalizeMessage(session, text) {
+function finalizeMessage(session, text, stopReason = 'stop') {
   const message = {
     role: 'assistant',
     content: [{ type: 'text', text }],
-    stopReason: 'stop',
+    stopReason,
   }
   session.messages.push(message)
   emit(session, { type: 'message_end', message })
@@ -149,75 +167,179 @@ async function streamChunks(fn, chunks, delay = 120) {
   }
 }
 
-async function runDeveloperPrompt(session, cwd) {
-  const todos = await readTodos(cwd)
-  const taskText = getCurrentTask(todos)
-  emit(session, { type: 'agent_start' })
-  await streamChunks((delta) => emitThinking(session, delta), [
+function buildThinkingChunks(taskText, scenario, isRepair) {
+  const chunks = [
     `Reading current task: ${taskText}. `,
-    'Planning smallest coherent change. ',
+    isRepair ? 'Applying focused repair from tester feedback. ' : 'Planning smallest coherent change. ',
     'Preparing file edit. ',
-  ])
+  ]
+  if (scenario === 'noisy') {
+    chunks.push(
+      'Scanning related files. ',
+      'Checking previous output for regressions. ',
+      'Comparing before and after state. ',
+      'Preparing richer tool trace for UI debugging. '
+    )
+  }
+  return chunks
+}
 
+async function emitWriteToolFlow(session, taskText, fileName, scenario, { isRepair = false } = {}) {
   emit(session, {
     type: 'tool_execution_start',
-    toolName: 'write',
-    args: { path: `${taskText}.txt` },
-  })
-  await sleep(150)
-  emit(session, {
-    type: 'tool_execution_update',
-    toolName: 'write',
-    args: { path: `${taskText}.txt` },
-    partialResult: { progress: 'creating implementation file' },
-  })
-  const fileName = await writeImplementationFile(cwd, taskText)
-  await sleep(150)
-  emit(session, {
-    type: 'tool_execution_update',
-    toolName: 'write',
+    toolName: isRepair ? 'edit' : 'write',
     args: { path: fileName },
-    partialResult: { progress: `wrote ${fileName}` },
-  })
-  await markFirstTodoDone(cwd)
-  emit(session, {
-    type: 'tool_execution_end',
-    toolName: 'write',
-    result: { fileName },
-    isError: false,
   })
 
-  await streamChunks((delta) => emitText(session, delta), [
-    `Finished ${taskText}. `,
-    `Updated TODOs and wrote ${fileName}.`,
-  ], 100)
-  finalizeMessage(session, `Finished ${taskText}. Updated TODOs and wrote ${fileName}.`)
+  const updates = scenario === 'noisy'
+    ? [
+        { progress: 'opening target file' },
+        { progress: 'writing task summary block' },
+        { progress: 'recording implementation details' },
+        { progress: 'finalizing output artifact' },
+      ]
+    : [
+        { progress: isRepair ? 'applying repair note' : 'creating implementation file' },
+        { progress: `wrote ${fileName}` },
+      ]
+
+  for (const partialResult of updates) {
+    await sleep(scenario === 'noisy' ? 90 : 150)
+    emit(session, {
+      type: 'tool_execution_update',
+      toolName: isRepair ? 'edit' : 'write',
+      args: { path: fileName, task: taskText },
+      partialResult,
+    })
+  }
+
+  emit(session, {
+    type: 'tool_execution_end',
+    toolName: isRepair ? 'edit' : 'write',
+    result: { fileName, repaired: isRepair },
+    isError: false,
+  })
+}
+
+async function runDeveloperPrompt(session, cwd) {
+  developerTurnCount += 1
+  const scenario = readScenario()
+  const todos = await readTodos(cwd)
+  const taskText = getCurrentTask(todos)
+  const isRepair = scenario === 'retry' && retryFailureInjected === true
+  const phase = isRepair ? 'repair' : 'develop'
+
+  emit(session, { type: 'agent_start' })
+  await streamChunks((delta) => emitThinking(session, delta), buildThinkingChunks(taskText, scenario, isRepair), scenario === 'noisy' ? 70 : 120)
+
+  const fileName = isRepair
+    ? await appendRepairNote(cwd, taskText)
+    : await writeImplementationFile(cwd, taskText, phase)
+
+  await emitWriteToolFlow(session, taskText, fileName, scenario, { isRepair })
+  if (!isRepair) {
+    await markFirstTodoDone(cwd)
+  }
+
+  const chunks = scenario === 'noisy'
+    ? [
+        `Finished ${taskText}. `,
+        `Updated TODOs and wrote ${fileName}. `,
+        'Streaming extra confirmation for feed stability checks.',
+      ]
+    : [
+        `Finished ${taskText}. `,
+        isRepair ? `Applied repair note in ${fileName}.` : `Updated TODOs and wrote ${fileName}.`,
+      ]
+
+  const finalText = isRepair
+    ? `Applied focused repair for ${taskText}. Updated ${fileName}.`
+    : `Finished ${taskText}. Updated TODOs and wrote ${fileName}.`
+
+  await streamChunks((delta) => emitText(session, delta), chunks, scenario === 'noisy' ? 60 : 100)
+  finalizeMessage(session, finalText)
 }
 
 async function runTesterPrompt(session, cwd) {
+  const scenario = readScenario()
   emit(session, { type: 'agent_start' })
   await streamChunks((delta) => emitThinking(session, delta), [
     'Reviewing changed files. ',
     'Staging task-scoped diff. ',
-    'Preparing commit. ',
-  ])
+    scenario === 'retry' && !retryFailureInjected ? 'Injecting synthetic tester failure for repair loop. ' : 'Preparing commit. ',
+  ], scenario === 'noisy' ? 70 : 120)
+
+  if (scenario === 'retry' && !retryFailureInjected) {
+    retryFailureInjected = true
+    emit(session, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      args: { command: 'git diff --stat' },
+    })
+    await sleep(90)
+    emit(session, {
+      type: 'tool_execution_update',
+      toolName: 'bash',
+      args: { command: 'git diff --stat' },
+      partialResult: { progress: 'detected mismatch in simulated review' },
+    })
+    emit(session, {
+      type: 'tool_execution_end',
+      toolName: 'bash',
+      result: { ok: false },
+      isError: true,
+    })
+
+    const failText = [
+      'Observed flow:',
+      '- Fake live tester found synthetic issue for repair-loop testing.',
+      'Player-facing result:',
+      '- FAIL.',
+      'Regression check:',
+      '- Re-run with focused repair.',
+      'VERDICT: FAIL',
+    ].join('\n')
+
+    await streamChunks((delta) => emitText(session, delta), [
+      'Tester synthetic fail injected. ',
+      'Requesting focused repair pass.',
+    ], 90)
+    finalizeMessage(session, failText)
+    return
+  }
 
   emit(session, {
     type: 'tool_execution_start',
     toolName: 'bash',
     args: { command: 'git add . && git commit' },
   })
-  await sleep(120)
-  emit(session, {
-    type: 'tool_execution_update',
-    toolName: 'bash',
-    args: { command: 'git add . && git commit' },
-    partialResult: { progress: 'staging files' },
-  })
+
+  const updates = scenario === 'noisy'
+    ? [
+        { progress: 'collecting changed files' },
+        { progress: 'staging files' },
+        { progress: 'writing commit message' },
+        { progress: 'finalizing commit metadata' },
+      ]
+    : [
+        { progress: 'staging files' },
+      ]
+
+  for (const partialResult of updates) {
+    await sleep(scenario === 'noisy' ? 80 : 120)
+    emit(session, {
+      type: 'tool_execution_update',
+      toolName: 'bash',
+      args: { command: 'git add . && git commit' },
+      partialResult,
+    })
+  }
+
   execFileSync('git', ['add', '.'], { cwd, stdio: 'ignore' })
-  const commitMessage = 'test(debug): fake live agent pass'
+  const commitMessage = `test(debug): fake live ${scenario} pass`
   execFileSync('git', ['commit', '-m', commitMessage], { cwd, stdio: 'ignore' })
   const commitSha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, encoding: 'utf8' }).trim()
+
   emit(session, {
     type: 'tool_execution_end',
     toolName: 'bash',
@@ -227,7 +349,7 @@ async function runTesterPrompt(session, cwd) {
 
   const finalText = [
     'Observed flow:',
-    '- Fake live tester reviewed latest task.',
+    `- Fake live tester reviewed latest task in ${scenario} scenario.`,
     'Player-facing result:',
     '- PASS.',
     'Regression check:',
@@ -238,11 +360,18 @@ async function runTesterPrompt(session, cwd) {
     'VERDICT: PASS',
   ].join('\n')
 
-  await streamChunks((delta) => emitText(session, delta), [
-    'Tester pass complete. ',
-    'Creating commit metadata. ',
-    'Returning PASS verdict.',
-  ], 100)
+  await streamChunks((delta) => emitText(session, delta), scenario === 'noisy'
+    ? [
+        'Tester pass complete. ',
+        'Creating commit metadata. ',
+        'Returning PASS verdict. ',
+        'Leaving extra feed traces for UI debugging.',
+      ]
+    : [
+        'Tester pass complete. ',
+        'Creating commit metadata. ',
+        'Returning PASS verdict.',
+      ], scenario === 'noisy' ? 60 : 100)
   finalizeMessage(session, finalText)
 }
 

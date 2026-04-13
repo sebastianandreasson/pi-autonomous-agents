@@ -318,6 +318,18 @@ function isInfrastructureVerificationFailure(output) {
   ].some((pattern) => text.includes(pattern))
 }
 
+function formatOutputExcerpt(output, maxChars = 4000, maxLines = 40) {
+  const text = String(output ?? '').trim()
+  if (text === '') {
+    return ''
+  }
+  const excerpt = text.split('\n').slice(-maxLines).join('\n')
+  if (excerpt.length <= maxChars) {
+    return excerpt
+  }
+  return `${excerpt.slice(excerpt.length - maxChars + 16)}\n... [truncated]`
+}
+
 async function recordEvent(config, event) {
   await appendTelemetry(config, {
     timestamp: timestamp(),
@@ -345,6 +357,7 @@ async function runAgentInvocation({
     activeKind: kind,
     activeRole: role,
     activeReason: reason,
+    activeStartedAt: timestamp(),
   })
 
   const beforeSnapshot = getRepoSnapshot(config.cwd)
@@ -533,6 +546,7 @@ async function runHarnessGitFinalize({
     activeKind: 'git_finalize',
     activeRole: '',
     activeReason: '',
+    activeStartedAt: timestamp(),
   })
 
   const beforeSnapshot = getRepoSnapshot(config.cwd)
@@ -653,6 +667,7 @@ async function runVerificationStep({ config, iteration, phase, kind }) {
     activeKind: kind,
     activeRole: '',
     activeReason: '',
+    activeStartedAt: timestamp(),
   })
 
   const beforeSnapshot = getRepoSnapshot(config.cwd)
@@ -696,6 +711,7 @@ async function runVerificationStep({ config, iteration, phase, kind }) {
     commitPlanFound: '',
     terminalReason: `verification_${verification.status}`,
     notes: verificationNotes,
+    outputExcerpt: formatOutputExcerpt(verification.output),
   })
 
   return verification
@@ -820,6 +836,10 @@ async function runDeveloperVerificationAndFix({
   let nextSessionId = sessionId
   let nextSessionFile = sessionFile
   let verificationStatus = verification.status
+  let verificationOutput = verification.output
+  let feedbackSource = (verification.status === 'failed' || verification.status === 'timed_out')
+    ? 'developer_verification'
+    : ''
 
   if (verification.status === 'failed' || verification.status === 'timed_out') {
     if (isInfrastructureVerificationFailure(verification.output)) {
@@ -831,8 +851,8 @@ async function runDeveloperVerificationAndFix({
         verificationStatus,
         sessionId: nextSessionId,
         sessionFile: nextSessionFile,
-        verificationOutput: verification.output,
-        feedbackSource: 'developer_verification',
+        verificationOutput,
+        feedbackSource,
       }
     }
 
@@ -859,8 +879,11 @@ async function runDeveloperVerificationAndFix({
       })
 
       verificationStatus = reverify.status
+      verificationOutput = reverify.output
+      feedbackSource = reverify.status === 'passed' ? '' : 'developer_reverification'
     } else {
       verificationStatus = 'not_run'
+      feedbackSource = 'developer_verification'
     }
   }
 
@@ -869,10 +892,8 @@ async function runDeveloperVerificationAndFix({
     verificationStatus,
     sessionId: nextSessionId,
     sessionFile: nextSessionFile,
-    verificationOutput: verification.output,
-    feedbackSource: verification.status === 'failed' || verification.status === 'timed_out'
-      ? 'developer_verification'
-      : '',
+    verificationOutput,
+    feedbackSource,
   }
 }
 
@@ -1026,6 +1047,7 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
     activeKind: 'visual_capture',
     activeRole: '',
     activeReason: '',
+    activeStartedAt: timestamp(),
   })
 
   const capture = await runVisualCapture(config, {
@@ -1082,6 +1104,7 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
     activeKind: 'visual_review',
     activeRole: 'visualReview',
     activeReason: '',
+    activeStartedAt: timestamp(),
   })
 
   const visualReviewModel = resolveRoleModel(config, 'visualReview')
@@ -1180,6 +1203,10 @@ async function runIteration({ config, state, iteration }) {
       phase: taskInfo.phase || 'complete',
       task: '',
       lastCompletedIteration: iteration,
+      activeKind: '',
+      activeRole: '',
+      activeReason: '',
+      activeStartedAt: '',
     })
     await appendLog(config.logFile, 'No unchecked tasks remain in TODOS.md')
     return {
@@ -1248,6 +1275,7 @@ async function runIteration({ config, state, iteration }) {
     activeKind: '',
     activeRole: '',
     activeReason: '',
+    activeStartedAt: '',
   })
   const canResumePriorSession = (
     state.lastTransport === config.transport
@@ -1631,6 +1659,7 @@ async function runIteration({ config, state, iteration }) {
     activeKind: '',
     activeRole: '',
     activeReason: '',
+    activeStartedAt: '',
   })
 
   await appendLog(
@@ -1799,6 +1828,7 @@ async function main() {
         activeKind: '',
         activeRole: '',
         activeReason: '',
+        activeStartedAt: '',
       })
       const result = await runIteration({ config, state, iteration })
       await writeIterationSummary(config, result.iterationSummary ?? result.summary)
@@ -1828,6 +1858,7 @@ async function main() {
       activeKind: '',
       activeRole: '',
       activeReason: '',
+      activeStartedAt: '',
     })
     if (visualizer) {
       await visualizer.close().catch(() => {})
