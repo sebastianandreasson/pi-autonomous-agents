@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 import process from 'node:process'
+import { execFileSync } from 'node:child_process'
 import { readTelemetry } from './pi-telemetry.mjs'
 import { readJsonFile } from './pi-repo.mjs'
 import { deriveFlowSnapshot, deriveStageGraph, formatActiveLabel } from './pi-visualizer-shared.mjs'
@@ -37,6 +38,104 @@ async function readJsonlTail(filePath, maxItems = 200) {
       .filter(Boolean)
       .slice(-maxItems)
       .map((line) => JSON.parse(line))
+  } catch {
+    return []
+  }
+}
+
+async function parseTodos(taskFile, activeTaskText = '') {
+  try {
+    const raw = await fs.readFile(taskFile, 'utf8')
+    const lines = raw.split('\n')
+    const items = []
+    let currentPhase = ''
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      const headingMatch = /^(#+)\s+(.+)$/.exec(line)
+      if (headingMatch) {
+        const level = headingMatch[1].length
+        const text = headingMatch[2].trim()
+        if (level === 2) {
+          currentPhase = text
+        }
+        items.push({
+          id: `line-${index + 1}`,
+          kind: 'heading',
+          lineNumber: index + 1,
+          level,
+          text,
+          phase: currentPhase || text,
+          raw: line,
+          checked: false,
+          active: false,
+        })
+        continue
+      }
+
+      const checkboxMatch = /^\s*[-*]\s+\[( |x)\]\s+(.+)$/.exec(line)
+      if (checkboxMatch) {
+        const checked = checkboxMatch[1].toLowerCase() === 'x'
+        const text = checkboxMatch[2].trim()
+        items.push({
+          id: `line-${index + 1}`,
+          kind: 'task',
+          lineNumber: index + 1,
+          level: 0,
+          text,
+          phase: currentPhase,
+          raw: line,
+          checked,
+          active: text === activeTaskText,
+        })
+        continue
+      }
+
+      if (line.trim() !== '') {
+        items.push({
+          id: `line-${index + 1}`,
+          kind: 'line',
+          lineNumber: index + 1,
+          level: 0,
+          text: line.trim(),
+          phase: currentPhase,
+          raw: line,
+          checked: false,
+          active: false,
+        })
+      }
+    }
+
+    return items
+  } catch {
+    return []
+  }
+}
+
+function readRepoDiff(cwd) {
+  try {
+    const status = execFileSync('git', ['status', '--short'], { cwd, encoding: 'utf8' }).trim()
+    if (status === '') {
+      return []
+    }
+
+    const files = status
+      .split('\n')
+      .map((line) => line.slice(3).trim())
+      .filter(Boolean)
+
+    return files.map((file) => {
+      let diff = ''
+      try {
+        diff = execFileSync('git', ['diff', '--no-ext-diff', '--unified=1', '--', file], { cwd, encoding: 'utf8' }).trim()
+      } catch {
+        diff = ''
+      }
+      return {
+        file,
+        diff,
+      }
+    })
   } catch {
     return []
   }
@@ -139,6 +238,12 @@ export async function buildSnapshot(config, queryRunId = '') {
     telemetry,
   })
 
+  const activeTaskText = String(activeRun?.task ?? summary?.task ?? '').trim()
+  const [todos, currentEdits] = await Promise.all([
+    parseTodos(config.taskFile, activeTaskText),
+    Promise.resolve(readRepoDiff(config.cwd)),
+  ])
+
   return {
     now: new Date().toISOString(),
     config: {
@@ -159,6 +264,8 @@ export async function buildSnapshot(config, queryRunId = '') {
       activeLabel: formatActiveLabel(activeRun, flow),
     },
     graph,
+    todos,
+    currentEdits,
     lastOutput: currentOutput,
     liveFeed,
     recentTelemetry,
@@ -205,8 +312,8 @@ export function renderHtml() {
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pending); }
     .dot.active { background: var(--active); box-shadow: 0 0 18px rgba(110,231,255,.6); }
     .grid { display: grid; gap: 16px; }
-    .grid.top { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
-    .grid.main { grid-template-columns: 1.25fr .95fr; }
+    .grid.main { grid-template-columns: minmax(320px, 420px) 1fr; align-items: start; }
+    .detail-split { display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:16px; }
     .card {
       background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01));
       border: 1px solid var(--line); border-radius: 16px; padding: 16px;
@@ -215,6 +322,17 @@ export function renderHtml() {
     .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
     .value { margin-top: 8px; font-size: 22px; font-weight: 700; }
     .value.small { font-size: 16px; }
+    .todo-list { max-height: calc(100vh - 140px); overflow: auto; padding-right: 4px; }
+    .todo-item { border:1px solid var(--line); border-radius:14px; background: var(--panel); margin-bottom:10px; overflow:hidden; }
+    .todo-item.active { border-color: var(--active); box-shadow: 0 0 0 1px rgba(110,231,255,.25) inset; }
+    .todo-summary { list-style:none; cursor:pointer; padding:12px 14px; display:flex; gap:10px; align-items:flex-start; }
+    .todo-summary::-webkit-details-marker { display:none; }
+    .todo-line { color: var(--muted); font-size: 11px; min-width: 52px; }
+    .todo-text { flex:1; }
+    .todo-heading { font-weight:700; }
+    .todo-task { font-weight:600; }
+    .todo-checked { color: var(--done); }
+    .todo-open-body { padding: 0 14px 14px 14px; color: var(--muted); font-size: 12px; }
     .flow { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
     .step, .graph-node {
       border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: var(--panel);
@@ -233,6 +351,8 @@ export function renderHtml() {
     .graph { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:12px; }
     .graph-node { min-height: 120px; width: 100%; text-align: left; color: var(--text); font: inherit; cursor: pointer; }
     .graph-arrow { color: var(--muted); text-align: center; align-self: center; }
+    .state-bar { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    .state-chip { border:1px solid var(--line); border-radius:999px; padding:6px 10px; color: var(--muted); background: rgba(255,255,255,.03); }
     .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; margin-top: 12px; }
     .feed-toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:12px; margin-bottom:10px; }
     .feed-toggle { display:flex; gap:6px; align-items:center; color: var(--muted); font-size: 12px; }
@@ -269,8 +389,13 @@ export function renderHtml() {
     .status-pill.error { color: var(--error); }
     .status-pill.skipped { color: var(--skip); }
     .status-pill.active { color: var(--active); }
+    .edit-list { max-height: 360px; overflow:auto; }
+    .edit-item { border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden; }
+    .edit-head { padding:10px 12px; background: rgba(255,255,255,.03); font-weight:600; }
     .muted { color: var(--muted); }
-    @media (max-width: 1100px) { .grid.top, .grid.main, .flow { grid-template-columns: 1fr; } }
+    details.bottom { margin-top: 16px; }
+    details.bottom summary { cursor:pointer; color: var(--muted); margin-bottom:10px; }
+    @media (max-width: 1100px) { .grid.main, .detail-split, .flow { grid-template-columns: 1fr; } .todo-list { max-height:none; } }
   </style>
 </head>
 <body>
@@ -286,48 +411,48 @@ export function renderHtml() {
       </div>
     </div>
 
-    <div class="grid top">
-      <div class="card"><div class="label">Current activity</div><div class="value" id="active-label">—</div></div>
-      <div class="card"><div class="label">Iteration</div><div class="value" id="iteration">—</div></div>
-      <div class="card"><div class="label">Phase</div><div class="value small" id="phase">—</div></div>
-      <div class="card"><div class="label">Task</div><div class="value small" id="task">—</div></div>
-    </div>
-
-    <div class="card" style="margin-bottom: 16px;">
-      <div class="label">Orchestration flow</div>
-      <div class="flow" id="flow"></div>
-    </div>
-
-    <div class="card" style="margin-bottom: 16px;">
-      <div class="label">Iteration stage graph</div>
-      <div class="graph" id="graph"></div>
-    </div>
-
     <div class="grid main">
       <div class="card">
-        <div class="label">Recent telemetry timeline</div>
-        <div style="margin-top: 12px; overflow: auto; max-height: 620px;">
-          <table>
-            <thead><tr><th>Time</th><th>Iteration</th><th>Kind</th><th>Status</th><th>Notes</th></tr></thead>
-            <tbody id="timeline"></tbody>
-          </table>
-        </div>
+        <div class="label">TODOS</div>
+        <div class="todo-list" id="todo-list"></div>
       </div>
 
-      <div class="grid">
-        <div class="card"><div class="label">Run state</div><div class="kv" id="run-state"></div></div>
-        <div class="card"><div class="label">Latest tool output</div><div class="pinned-tool" id="pinned-tool">No tool activity yet.</div></div>
+      <div>
         <div class="card">
-          <div class="label">Live worker feed</div>
-          <div class="feed-toolbar">
-            <label class="feed-toggle"><input type="checkbox" id="feed-show-thinking" checked /> <span>Show thinking</span></label>
-            <label class="feed-toggle"><input type="checkbox" id="feed-collapse-deltas" checked /> <span>Collapse deltas</span></label>
+          <div class="label">Focused todo</div>
+          <div class="value small" id="todo-focus-title">—</div>
+          <div class="state-bar" id="todo-state-bar"></div>
+          <div class="flow" id="flow"></div>
+          <div class="detail-split">
+            <div class="card" style="margin:0;">
+              <div class="label">Live worker feed</div>
+              <div class="feed-toolbar">
+                <label class="feed-toggle"><input type="checkbox" id="feed-show-thinking" checked /> <span>Show thinking</span></label>
+                <label class="feed-toggle"><input type="checkbox" id="feed-collapse-deltas" checked /> <span>Collapse deltas</span></label>
+              </div>
+              <div class="feed" id="feed">No live feed yet.</div>
+            </div>
+            <div class="grid" style="gap:16px;">
+              <div class="card" style="margin:0;"><div class="label">Latest tool output</div><div class="pinned-tool" id="pinned-tool">No tool activity yet.</div></div>
+              <div class="card" style="margin:0;">
+                <div class="label">Current edits for focused todo</div>
+                <div class="edit-list" id="edit-list">No repo edits yet.</div>
+              </div>
+            </div>
           </div>
-          <div class="feed" id="feed">No live feed yet.</div>
         </div>
-        <div class="card"><div class="label">Selected event</div><pre id="selected-event">Click graph node or timeline row.</pre></div>
-        <div class="card"><div class="label">Last iteration summary</div><pre id="summary">—</pre></div>
-        <div class="card"><div class="label">Last agent output</div><pre id="output">—</pre></div>
+
+        <details class="bottom card">
+          <summary>Diagnostics</summary>
+          <div class="grid" style="gap:16px;">
+            <div class="card" style="margin:0;"><div class="label">Run state</div><div class="kv" id="run-state"></div></div>
+            <div class="card" style="margin:0;"><div class="label">Iteration stage graph</div><div class="graph" id="graph"></div></div>
+            <div class="card" style="margin:0;"><div class="label">Recent telemetry timeline</div><div style="margin-top: 12px; overflow: auto; max-height: 360px;"><table><thead><tr><th>Time</th><th>Iteration</th><th>Kind</th><th>Status</th><th>Notes</th></tr></thead><tbody id="timeline"></tbody></table></div></div>
+            <div class="card" style="margin:0;"><div class="label">Selected event</div><pre id="selected-event">Click graph node or timeline row.</pre></div>
+            <div class="card" style="margin:0;"><div class="label">Last iteration summary</div><pre id="summary">—</pre></div>
+            <div class="card" style="margin:0;"><div class="label">Last agent output</div><pre id="output">—</pre></div>
+          </div>
+        </details>
       </div>
     </div>
   </div>
@@ -361,6 +486,7 @@ export function renderHtml() {
 
     let latestSnapshot = null
     let selectedEventId = ''
+    let selectedTodoId = ''
     let eventSource = null
 
     function normalizeFeedEntry(entry) {
@@ -420,11 +546,75 @@ export function renderHtml() {
         || null
     }
 
+    function findSelectedTodo(snapshot) {
+      if (!snapshot) return null
+      const todos = Array.isArray(snapshot.todos) ? snapshot.todos : []
+      if (selectedTodoId) {
+        const direct = todos.find((item) => item.id === selectedTodoId)
+        if (direct) return direct
+      }
+      return todos.find((item) => item.active) || todos.find((item) => item.kind === 'task') || todos[0] || null
+    }
+
     function renderSelectedEvent() {
       const event = findEventById(latestSnapshot, selectedEventId)
       document.getElementById('selected-event').textContent = event
         ? JSON.stringify(event, null, 2)
         : 'Click graph node or timeline row.'
+    }
+
+    function renderTodos(snapshot) {
+      const todos = Array.isArray(snapshot?.todos) ? snapshot.todos : []
+      const selected = findSelectedTodo(snapshot)
+      if (selected && !selectedTodoId) {
+        selectedTodoId = selected.id
+      }
+      const list = document.getElementById('todo-list')
+      list.innerHTML = todos.length > 0
+        ? todos.map((item) => {
+            const active = selected && item.id === selected.id
+            const textClass = item.kind === 'heading' ? 'todo-heading' : (item.kind === 'task' ? 'todo-task' : '')
+            const checkedMark = item.kind === 'task' ? (item.checked ? '✓' : '○') : (item.kind === 'heading' ? '#' : '·')
+            const checkedClass = item.checked ? 'todo-checked' : ''
+            return '<details class="todo-item ' + (active ? 'active' : '') + '" ' + (active ? 'open' : '') + ' data-todo-id="' + esc(item.id) + '">' +
+              '<summary class="todo-summary">' +
+                '<div class="todo-line">' + esc(String(item.lineNumber)) + '</div>' +
+                '<div class="' + textClass + ' ' + checkedClass + '">' + esc(checkedMark + ' ' + item.text) + '</div>' +
+              '</summary>' +
+              '<div class="todo-open-body">' + esc(item.phase || '') + '</div>' +
+            '</details>'
+          }).join('')
+        : '<div class="muted">No TODO items found.</div>'
+
+      list.querySelectorAll('[data-todo-id]').forEach((element) => {
+        element.addEventListener('toggle', () => {
+          if (element.open) {
+            selectedTodoId = element.getAttribute('data-todo-id') || ''
+            renderSnapshot(snapshot)
+          }
+        })
+      })
+    }
+
+    function renderFocusedTodo(snapshot) {
+      const todo = findSelectedTodo(snapshot)
+      document.getElementById('todo-focus-title').textContent = todo ? todo.text : 'No todo selected.'
+      const stateBar = document.getElementById('todo-state-bar')
+      const chips = [
+        ['Current activity', snapshot?.flow?.activeLabel || 'Idle'],
+        ['Iteration', snapshot?.flow?.iteration || '—'],
+        ['Phase', todo?.phase || snapshot?.summary?.phase || '—'],
+        ['Task status', todo?.kind === 'task' ? (todo.checked ? 'Done' : (todo.active ? 'Active' : 'Pending')) : 'Info'],
+      ]
+      stateBar.innerHTML = chips.map(([label, value]) => '<div class="state-chip">' + esc(label + ': ' + value) + '</div>').join('')
+    }
+
+    function renderCurrentEdits(snapshot) {
+      const edits = Array.isArray(snapshot?.currentEdits) ? snapshot.currentEdits : []
+      const target = document.getElementById('edit-list')
+      target.innerHTML = edits.length > 0
+        ? edits.map((entry) => '<details class="edit-item" open><summary class="edit-head">' + esc(entry.file) + '</summary><pre>' + esc(entry.diff || 'No diff available.') + '</pre></details>').join('')
+        : '<div class="muted">No repo edits yet.</div>'
     }
 
     function bindSelectableEvents() {
@@ -451,10 +641,10 @@ export function renderHtml() {
       latestSnapshot = data
       document.getElementById('cwd').textContent = data.config.cwd
       document.getElementById('last-refresh').textContent = 'Updated ' + new Date(data.now).toLocaleTimeString()
-      document.getElementById('active-label').textContent = data.flow.activeLabel || 'Idle'
-      document.getElementById('iteration').textContent = data.flow.iteration || '—'
-      document.getElementById('phase').textContent = data.activeRun?.phase || data.summary?.phase || '—'
-      document.getElementById('task').textContent = data.activeRun?.task || data.summary?.task || '—'
+      if (!selectedTodoId) {
+        const activeTodo = (Array.isArray(data.todos) ? data.todos.find((item) => item.active) : null) || null
+        selectedTodoId = activeTodo?.id || ''
+      }
 
       const select = document.getElementById('run-select')
       const selected = data.config.selectedRunId || ''
@@ -470,6 +660,10 @@ export function renderHtml() {
         })
         select.dataset.bound = '1'
       }
+
+      renderTodos(data)
+      renderFocusedTodo(data)
+      renderCurrentEdits(data)
 
       const flowEl = document.getElementById('flow')
       flowEl.innerHTML = data.flow.steps.map((step) => {

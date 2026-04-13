@@ -57,7 +57,7 @@ The package reads `PI_CONFIG_FILE` if provided. Otherwise it falls back to the b
 
 `pi-harness visualize` remains available as standalone viewer.
 
-Visualizer reads active-run lock, per-run state, per-run iteration summary, per-run last output snapshot, live feed JSONL, and telemetry to show current stage plus historical runs.
+Visualizer reads active-run lock, TODO file, per-run state, per-run iteration summary, per-run last output snapshot, live feed JSONL, and telemetry to show current stage plus historical runs.
 
 ## Config Contract
 

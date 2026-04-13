@@ -272,9 +272,11 @@ Visualizer uses SSE for live updates instead of browser polling.
 `pi-harness visualize` still exists as standalone viewer if you want to inspect run history without starting a new run.
 
 Visualizer now includes:
+- TODO-centric main view with current task open by default
 - run history selector from `.pi-runtime/runs/`
-- orchestration flow strip
-- per-iteration stage graph with retries/rechecks
+- orchestration flow for selected todo
+- 50/50 split between live worker feed and current repo edits
+- per-iteration stage graph with retries/rechecks in diagnostics
 - clickable graph nodes and timeline rows that show full event JSON
 - historical run summaries and per-run last output snapshots
 - live worker feed with thinking text, assistant text, tool calls, and tool output
