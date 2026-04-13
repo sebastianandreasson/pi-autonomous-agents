@@ -30,6 +30,13 @@ function formatLastAgentOutput(response) {
   return `${sections.join('\n')}\n`
 }
 
+async function writeAgentOutputSnapshot(config, content) {
+  await writeTextFile(config.lastAgentOutputFile, content)
+  if (config.runLastAgentOutputFile && config.runLastAgentOutputFile !== config.lastAgentOutputFile) {
+    await writeTextFile(config.runLastAgentOutputFile, content)
+  }
+}
+
 async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
   const nextSessionId = sessionId || `mock-${randomUUID()}`
   const nextSessionFile = sessionFile || `${config.piRuntimeDir}/mock-${nextSessionId}.jsonl`
@@ -43,7 +50,7 @@ async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
     'Mock mode does not edit files. Use default sdk transport for real unattended work.',
   ].join('\n')
 
-  await writeTextFile(config.lastAgentOutputFile, `${output}\n`)
+  await writeAgentOutputSnapshot(config, `${output}\n`)
   await appendLog(config.logFile, `Mock agent turn completed for session ${nextSessionId}`)
   if (config.streamTerminal) {
     process.stderr.write(`[PI mock] ${reason}\n`)
@@ -114,7 +121,7 @@ async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prom
     })
   } catch (error) {
     const notes = error instanceof Error ? error.message : String(error)
-    await writeTextFile(config.lastAgentOutputFile, `${notes}\n`)
+    await writeAgentOutputSnapshot(config, `${notes}\n`)
     await appendLog(config.logFile, `SDK turn failed: ${notes}`)
     return {
       sessionId: sessionId || '',
@@ -137,7 +144,7 @@ async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prom
     }
   }
 
-  await writeTextFile(config.lastAgentOutputFile, formatLastAgentOutput(response))
+  await writeAgentOutputSnapshot(config, formatLastAgentOutput(response))
   await appendLog(config.logFile, `SDK turn completed with status ${String(response.status ?? 'success')}`)
 
   return {

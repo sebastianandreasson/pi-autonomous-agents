@@ -264,7 +264,14 @@ Useful files during a run:
 
 `pi-harness report` summarizes recent telemetry and surfaces things like terminal reasons and large-file warnings.
 
-`pi-harness visualize` starts a lightweight local web UI for orchestration flow. By default it listens on `127.0.0.1:4317`. Override with `PI_VISUALIZER_HOST` and `PI_VISUALIZER_PORT`.
+`pi-harness visualize` starts lightweight local web UI for orchestration flow. By default it listens on `127.0.0.1:4317`. Override with `PI_VISUALIZER_HOST` and `PI_VISUALIZER_PORT`.
+
+Visualizer now includes:
+- run history selector from `.pi-runtime/runs/`
+- orchestration flow strip
+- per-iteration stage graph with retries/rechecks
+- clickable graph nodes and timeline rows that show full event JSON
+- historical run summaries and per-run last output snapshots
 
 ## Visual Review Contract
 

@@ -10,6 +10,10 @@ function csvEscape(value) {
 
 export async function ensureTelemetryFiles(config) {
   await fs.writeFile(config.lastAgentOutputFile, '', 'utf8')
+  if (config.runLastAgentOutputFile && config.runLastAgentOutputFile !== config.lastAgentOutputFile) {
+    await fs.mkdir(path.dirname(config.runLastAgentOutputFile), { recursive: true })
+    await fs.writeFile(config.runLastAgentOutputFile, '', 'utf8')
+  }
   await fs.writeFile(config.lastVerificationOutputFile, '', 'utf8')
   await fs.writeFile(config.changedFilesFile, '', 'utf8')
   await fs.writeFile(config.lastPromptFile, '', 'utf8')

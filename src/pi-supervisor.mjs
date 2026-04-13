@@ -1732,6 +1732,7 @@ async function main() {
   config.runTelemetryCsv = path.join(runDir, 'pi_telemetry.csv')
   config.runStateFile = path.join(runDir, 'state.json')
   config.runLastIterationSummaryFile = path.join(runDir, 'last-iteration.json')
+  config.runLastAgentOutputFile = path.join(runDir, 'last-output.txt')
 
   ensureRepo(config.cwd)
   await ensureFileExists(config.taskFile, 'task file')

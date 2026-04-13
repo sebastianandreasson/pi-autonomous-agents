@@ -9,12 +9,34 @@ const FLOW_STEPS = [
   { key: 'summary', label: 'Summary' },
 ]
 
+const KIND_LABELS = {
+  main_agent: 'Developer',
+  developer_verification: 'Verification',
+  developer_reverification: 'Reverification',
+  tester_reverification: 'Tester Reverify',
+  tester_agent: 'Tester',
+  tester_commit: 'Tester Commit',
+  fix_agent: 'Fix',
+  git_finalize: 'Git Finalize',
+  visual_capture: 'Visual Capture',
+  visual_review: 'Visual Review',
+  iteration_summary: 'Summary',
+}
+
 const SUCCESS_STATUSES = new Set(['success', 'passed', 'complete'])
 const ERROR_STATUSES = new Set(['failed', 'timed_out', 'stalled', 'blocked', 'canceled'])
 const SKIP_STATUSES = new Set(['skipped', 'not_run', 'not_needed'])
 
 export function getFlowSteps() {
   return FLOW_STEPS.map((step) => ({ ...step }))
+}
+
+export function getLabelForKind(kind) {
+  const key = String(kind ?? '').trim()
+  if (key === '') {
+    return 'Unknown'
+  }
+  return KIND_LABELS[key] || key
 }
 
 export function getStepKeyForKind(kind) {
@@ -128,6 +150,49 @@ export function deriveFlowSnapshot({ activeRun, summary, telemetry }) {
     iteration: currentIteration,
     activeStepKey,
     steps,
+  }
+}
+
+export function deriveStageGraph({ activeRun, summary, telemetry }) {
+  const flow = deriveFlowSnapshot({ activeRun, summary, telemetry })
+  const currentIteration = flow.iteration
+  const iterationTelemetry = Array.isArray(telemetry)
+    ? telemetry.filter((event) => Number(event?.iteration) === currentIteration)
+    : []
+
+  const nodes = iterationTelemetry.map((event, index) => {
+    const stepKey = getStepKeyForKind(event?.kind)
+    const status = flow.activeStepKey !== '' && flow.activeStepKey === stepKey && index === iterationTelemetry.length - 1
+      ? 'active'
+      : normalizeEventStatus(event?.status)
+
+    return {
+      id: `${String(event?.kind ?? 'event')}-${index}`,
+      index,
+      kind: String(event?.kind ?? ''),
+      label: getLabelForKind(event?.kind),
+      stepKey,
+      status,
+      role: String(event?.role ?? ''),
+      terminalReason: String(event?.terminalReason ?? ''),
+      notes: String(event?.notes ?? ''),
+      iteration: Number(event?.iteration) || currentIteration,
+      phase: String(event?.phase ?? ''),
+      timestamp: String(event?.timestamp ?? ''),
+      retryCount: Number.isFinite(Number(event?.retryCount)) ? Number(event.retryCount) : 0,
+      event,
+    }
+  })
+
+  const edges = nodes.slice(1).map((node, index) => ({
+    from: nodes[index].id,
+    to: node.id,
+  }))
+
+  return {
+    iteration: currentIteration,
+    nodes,
+    edges,
   }
 }
 

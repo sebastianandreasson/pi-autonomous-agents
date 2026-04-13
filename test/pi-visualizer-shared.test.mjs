@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   deriveCurrentIteration,
   deriveFlowSnapshot,
+  deriveStageGraph,
   formatActiveLabel,
   getStepKeyForActiveRun,
   getStepKeyForKind,
@@ -59,4 +60,23 @@ test('formats active label from flow state', () => {
     telemetry: [],
   })
   assert.equal(formatActiveLabel({ activeKind: 'visual_capture' }, flow), 'Visual Capture')
+})
+
+test('builds stage graph for current iteration timeline', () => {
+  const graph = deriveStageGraph({
+    activeRun: { iteration: 3, activeKind: 'fix_agent' },
+    summary: null,
+    telemetry: [
+      { iteration: 3, kind: 'main_agent', status: 'success', retryCount: 0 },
+      { iteration: 3, kind: 'developer_verification', status: 'failed', retryCount: 0 },
+      { iteration: 3, kind: 'fix_agent', status: 'success', retryCount: 0 },
+    ],
+  })
+
+  assert.equal(graph.iteration, 3)
+  assert.equal(graph.nodes.length, 3)
+  assert.equal(graph.nodes[0].label, 'Developer')
+  assert.equal(graph.nodes[1].status, 'error')
+  assert.equal(graph.nodes[2].status, 'active')
+  assert.equal(graph.edges.length, 2)
 })
