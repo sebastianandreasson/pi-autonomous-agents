@@ -4,7 +4,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { readTelemetry } from './pi-telemetry.mjs'
+import { readJsonlTail, readTelemetryTail } from './pi-telemetry.mjs'
 import { readJsonFile } from './pi-repo.mjs'
 import { deriveFlowSnapshot, deriveStageGraph, formatActiveLabel } from './pi-visualizer-shared.mjs'
 
@@ -72,29 +72,6 @@ async function readOptionalText(filePath, maxLength = 6000) {
     return `${text.slice(0, maxLength - 15)}\n... [truncated]`
   } catch {
     return ''
-  }
-}
-
-async function readJsonlTail(filePath, maxItems = 200) {
-  try {
-    const raw = await fs.readFile(filePath, 'utf8')
-    const items = []
-    for (const line of raw.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed === '') {
-        continue
-      }
-      try {
-        items.push(JSON.parse(trimmed))
-      } catch {
-        // Ignore partial/truncated trailing JSONL records while file is actively being appended.
-      }
-    }
-    return items
-      .sort((left, right) => String(left?.timestamp ?? '').localeCompare(String(right?.timestamp ?? '')))
-      .slice(-maxItems)
-  } catch {
-    return []
   }
 }
 
@@ -292,9 +269,9 @@ export async function buildSnapshot(config, queryRunId = '') {
   const [state, summary, telemetry, currentOutput, liveFeed] = await Promise.all([
     readJsonFile(selectedConfig.stateFile, null),
     readJsonFile(selectedConfig.lastIterationSummaryFile, null),
-    readTelemetry(selectedConfig),
+    readTelemetryTail(selectedConfig, 160, 512 * 1024),
     readOptionalText(selectedConfig.lastAgentOutputFile, 5000),
-    readJsonlTail(selectedConfig.liveFeedFile, 300),
+    readJsonlTail(selectedConfig.liveFeedFile, { maxItems: 300, maxBytes: 768 * 1024 }),
   ])
 
   const recentTelemetry = telemetry.slice(-160).map((event, index) => ({

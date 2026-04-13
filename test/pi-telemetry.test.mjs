@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { appendTelemetry, ensureTelemetryFiles } from '../src/pi-telemetry.mjs'
+import { appendTelemetry, ensureTelemetryFiles, readJsonlTail, readTelemetryTail } from '../src/pi-telemetry.mjs'
 
 async function makeTempDir() {
   return await fs.mkdtemp(path.join(os.tmpdir(), 'pi-telemetry-'))
@@ -91,4 +91,34 @@ test('appendTelemetry writes structured telemetry columns', async () => {
 
   const runCsv = await fs.readFile(config.runTelemetryCsv, 'utf8')
   assert.match(runCsv, /run-1/)
+})
+
+test('readJsonlTail returns recent complete records without loading whole file semantics into caller', async () => {
+  const cwd = await makeTempDir()
+  const filePath = path.join(cwd, 'events.jsonl')
+  const records = []
+  for (let index = 1; index <= 40; index += 1) {
+    records.push(JSON.stringify({ seq: index, text: `event-${index}` }))
+  }
+  records.push('{"seq": 41, "text": "partial"')
+  await fs.writeFile(filePath, `${records.join('\n')}\n`, 'utf8')
+
+  const tail = await readJsonlTail(filePath, { maxItems: 5, maxBytes: 512 })
+  assert.deepEqual(tail.map((entry) => entry.seq), [36, 37, 38, 39, 40])
+})
+
+test('readTelemetryTail returns recent telemetry records', async () => {
+  const cwd = await makeTempDir()
+  const config = {
+    telemetryJsonl: path.join(cwd, 'pi_telemetry.jsonl'),
+  }
+
+  const lines = []
+  for (let index = 1; index <= 12; index += 1) {
+    lines.push(JSON.stringify({ iteration: index, status: 'success' }))
+  }
+  await fs.writeFile(config.telemetryJsonl, `${lines.join('\n')}\n`, 'utf8')
+
+  const tail = await readTelemetryTail(config, 3, 256)
+  assert.deepEqual(tail.map((entry) => entry.iteration), [10, 11, 12])
 })

@@ -3,6 +3,9 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const liveFeedWriteQueues = new Map()
+const liveFeedSequences = new Map()
+const MAX_LIVE_FEED_TEXT = 2000
+const MAX_LIVE_FEED_SUMMARY = 600
 import {
   appendLog,
   writeTextFile,
@@ -41,6 +44,63 @@ async function writeAgentOutputSnapshot(config, content) {
   }
 }
 
+function truncateText(value, maxChars) {
+  const text = String(value ?? '')
+  if (text.length <= maxChars) {
+    return text
+  }
+  return `${text.slice(0, maxChars - 16)}\n... [truncated]`
+}
+
+function summarizeValue(value, maxChars = MAX_LIVE_FEED_SUMMARY) {
+  if (value === null || value === undefined) {
+    return ''
+  }
+  if (typeof value === 'string') {
+    return truncateText(value, maxChars)
+  }
+  try {
+    return truncateText(JSON.stringify(value), maxChars)
+  } catch {
+    return truncateText(String(value), maxChars)
+  }
+}
+
+function sanitizeLiveFeedEvent(filePath, event) {
+  const nextSeq = (liveFeedSequences.get(filePath) ?? 0) + 1
+  liveFeedSequences.set(filePath, nextSeq)
+
+  const normalized = {
+    seq: nextSeq,
+    timestamp: String(event?.timestamp ?? new Date().toISOString()),
+    iteration: Number(event?.iteration ?? 0),
+    retryCount: Number(event?.retryCount ?? 0),
+    reason: String(event?.reason ?? ''),
+    phase: String(event?.phase ?? ''),
+    role: String(event?.role ?? ''),
+    kind: String(event?.kind ?? ''),
+    type: String(event?.type ?? 'event'),
+    toolName: String(event?.toolName ?? ''),
+    isError: event?.isError === true,
+    text: truncateText(event?.text ?? '', MAX_LIVE_FEED_TEXT),
+  }
+
+  const argsSummary = summarizeValue(event?.args)
+  const partialSummary = summarizeValue(event?.partialResult)
+  const resultSummary = summarizeValue(event?.result)
+  if (argsSummary !== '') {
+    normalized.argsSummary = argsSummary
+  }
+  if (partialSummary !== '') {
+    normalized.partialSummary = partialSummary
+  }
+  if (resultSummary !== '') {
+    normalized.resultSummary = resultSummary
+  }
+
+  return normalized
+}
+
 async function appendLiveFeedEvent(config, event) {
   if (!config.runLiveFeedFile) {
     return
@@ -51,8 +111,9 @@ async function appendLiveFeedEvent(config, event) {
   const next = previous
     .catch(() => {})
     .then(async () => {
+      const sanitized = sanitizeLiveFeedEvent(filePath, event)
       await fs.mkdir(path.dirname(filePath), { recursive: true })
-      await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, 'utf8')
+      await fs.appendFile(filePath, `${JSON.stringify(sanitized)}\n`, 'utf8')
     })
 
   liveFeedWriteQueues.set(filePath, next)
