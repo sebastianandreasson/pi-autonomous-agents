@@ -1,6 +1,5 @@
 {
-  "transport": "adapter",
-  "adapterCommand": "pi-harness adapter",
+  "transport": "sdk",
   "instructionsFile": "",
   "taskFile": "TODOS.md",
   "commitMode": "agent",

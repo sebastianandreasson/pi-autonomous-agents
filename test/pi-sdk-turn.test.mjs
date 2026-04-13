@@ -1,0 +1,301 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import {
+  createTools,
+  normalizeToolNames,
+  resolveModel,
+  runSdkTurnWithPi,
+  splitModelSpec,
+} from '../src/pi-sdk-turn.mjs'
+
+function createFakePi({
+  models = [
+    { provider: 'local', id: 'dev-model', name: 'Local Dev Model' },
+  ],
+  promptImpl,
+} = {}) {
+  const toolCalls = []
+  let appliedOverrides = null
+
+  class DefaultResourceLoader {
+    constructor(options) {
+      this.options = options
+    }
+
+    async reload() {}
+  }
+
+  const modelRegistry = {
+    find(provider, modelId) {
+      return models.find((model) => model.provider === provider && model.id === modelId)
+    },
+    getAll() {
+      return models
+    },
+  }
+
+  const session = {
+    sessionId: 'sdk-session-1',
+    sessionFile: '/tmp/sdk-session-1.jsonl',
+    model: models[0],
+    messages: [],
+    _listener: null,
+    _disposed: false,
+    _aborts: 0,
+    subscribe(listener) {
+      this._listener = listener
+      return () => {
+        if (this._listener === listener) {
+          this._listener = null
+        }
+      }
+    },
+    emit(event) {
+      this._listener?.(event)
+    },
+    async prompt(prompt) {
+      if (promptImpl) {
+        await promptImpl(this, prompt)
+        return
+      }
+
+      this.emit({ type: 'agent_start' })
+      this.emit({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: 'done' },
+      })
+      const message = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'stop',
+      }
+      this.messages.push(message)
+      this.emit({ type: 'message_end', message })
+      this.emit({ type: 'agent_end' })
+    },
+    async steer() {},
+    async abort() {
+      this._aborts += 1
+    },
+    dispose() {
+      this._disposed = true
+    },
+  }
+
+  return {
+    getAgentDir() {
+      return '/tmp/pi-agent'
+    },
+    AuthStorage: {
+      create(file) {
+        return { file }
+      },
+    },
+    ModelRegistry: {
+      create() {
+        return modelRegistry
+      },
+    },
+    SettingsManager: {
+      create() {
+        return {
+          applyOverrides(overrides) {
+            appliedOverrides = overrides
+          },
+        }
+      },
+    },
+    DefaultResourceLoader,
+    SessionManager: {
+      create(cwd, sessionDir) {
+        return { kind: 'create', cwd, sessionDir }
+      },
+      open(sessionFile, sessionDir) {
+        return { kind: 'open', sessionFile, sessionDir }
+      },
+      continueRecent(cwd, sessionDir) {
+        return { kind: 'continueRecent', cwd, sessionDir }
+      },
+    },
+    createReadTool(cwd) {
+      toolCalls.push(['read', cwd])
+      return { name: 'read', cwd }
+    },
+    createBashTool(cwd) {
+      toolCalls.push(['bash', cwd])
+      return { name: 'bash', cwd }
+    },
+    createEditTool(cwd) {
+      toolCalls.push(['edit', cwd])
+      return { name: 'edit', cwd }
+    },
+    createWriteTool(cwd) {
+      toolCalls.push(['write', cwd])
+      return { name: 'write', cwd }
+    },
+    createGrepTool(cwd) {
+      toolCalls.push(['grep', cwd])
+      return { name: 'grep', cwd }
+    },
+    createFindTool(cwd) {
+      toolCalls.push(['find', cwd])
+      return { name: 'find', cwd }
+    },
+    createLsTool(cwd) {
+      toolCalls.push(['ls', cwd])
+      return { name: 'ls', cwd }
+    },
+    async createAgentSession(options) {
+      session.model = options.model ?? session.model
+      return { session }
+    },
+    _session: session,
+    _toolCalls: toolCalls,
+    _getAppliedOverrides() {
+      return appliedOverrides
+    },
+  }
+}
+
+test('splitModelSpec extracts optional thinking suffix', () => {
+  assert.deepEqual(splitModelSpec('openai/gpt-4o:high'), {
+    modelName: 'openai/gpt-4o',
+    thinkingLevel: 'high',
+  })
+  assert.deepEqual(splitModelSpec('local/model:weird'), {
+    modelName: 'local/model:weird',
+    thinkingLevel: '',
+  })
+})
+
+test('normalizeToolNames trims and de-duplicates tool list', () => {
+  assert.deepEqual(normalizeToolNames('read, bash,read, edit ,, bash'), ['read', 'bash', 'edit'])
+})
+
+test('createTools maps requested tool names to cwd-bound tool factories', () => {
+  const pi = createFakePi()
+  const tools = createTools(pi, '/repo', 'read,bash,edit')
+  assert.deepEqual(tools, [
+    { name: 'read', cwd: '/repo' },
+    { name: 'bash', cwd: '/repo' },
+    { name: 'edit', cwd: '/repo' },
+  ])
+  assert.deepEqual(pi._toolCalls, [
+    ['read', '/repo'],
+    ['bash', '/repo'],
+    ['edit', '/repo'],
+  ])
+})
+
+test('resolveModel finds provider-prefixed and ambiguous shorthand models', async () => {
+  const registry = {
+    find(provider, modelId) {
+      return provider === 'local' && modelId === 'dev-model'
+        ? { provider: 'local', id: 'dev-model', name: 'Local Dev Model' }
+        : undefined
+    },
+    getAll() {
+      return [
+        { provider: 'local', id: 'dev-model', name: 'Local Dev Model' },
+        { provider: 'other', id: 'dev-model', name: 'Other Dev Model' },
+      ]
+    },
+  }
+
+  const resolved = await resolveModel(registry, 'local/dev-model:medium')
+  assert.equal(resolved.provider, 'local')
+  await assert.rejects(() => resolveModel(registry, 'dev-model'), /ambiguous/)
+})
+
+test('runSdkTurnWithPi returns successful structured result', async () => {
+  const pi = createFakePi({
+    promptImpl: async (session) => {
+      session.emit({ type: 'agent_start' })
+      session.emit({
+        type: 'tool_execution_start',
+        toolName: 'read',
+        args: { path: 'src/file.js' },
+      })
+      session.emit({
+        type: 'tool_execution_end',
+        toolName: 'read',
+        isError: false,
+      })
+      session.emit({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: 'done' },
+      })
+      const message = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'stop',
+      }
+      session.messages.push(message)
+      session.emit({ type: 'message_end', message })
+      session.emit({ type: 'agent_end' })
+    },
+  })
+
+  const result = await runSdkTurnWithPi(pi, {
+    cwd: '/repo',
+    runtimeDir: '/repo/.pi-runtime/run-1',
+    prompt: 'do work',
+    model: 'local/dev-model:off',
+    tools: 'read,bash',
+    noThemes: true,
+  })
+
+  assert.equal(result.status, 'success')
+  assert.equal(result.output, 'done')
+  assert.equal(result.toolCalls, 1)
+  assert.equal(result.toolErrors, 0)
+  assert.equal(result.messageUpdates, 1)
+  assert.equal(result.terminalReason, 'agent_completed')
+  assert.match(result.notes, /PI session sdk-session-1/)
+  assert.deepEqual(pi._getAppliedOverrides(), { retry: { enabled: false } })
+  assert.equal(pi._session._disposed, true)
+})
+
+test('runSdkTurnWithPi marks repeated tool churn as stalled and aborts session', async () => {
+  const pi = createFakePi({
+    promptImpl: async (session) => {
+      session.emit({ type: 'agent_start' })
+      session.emit({
+        type: 'tool_execution_start',
+        toolName: 'read',
+        args: { path: 'src/file.js' },
+      })
+      session.emit({
+        type: 'tool_execution_start',
+        toolName: 'read',
+        args: { path: 'src/file.js' },
+      })
+      const message = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial' }],
+        stopReason: 'aborted',
+      }
+      session.messages.push(message)
+      session.emit({ type: 'message_end', message })
+      session.emit({ type: 'agent_end' })
+    },
+  })
+
+  const result = await runSdkTurnWithPi(pi, {
+    cwd: '/repo',
+    runtimeDir: '/repo/.pi-runtime/run-1',
+    prompt: 'do work',
+    model: 'local/dev-model',
+    tools: 'read',
+    loopRepeatThreshold: 2,
+    samePathRepeatThreshold: 2,
+    noThemes: true,
+  })
+
+  assert.equal(result.status, 'stalled')
+  assert.equal(result.terminalReason, 'loop_detected')
+  assert.equal(result.loopDetected, true)
+  assert.equal(result.loopSignature, 'read {"path":"src/file.js"}')
+  assert.equal(pi._session._aborts, 1)
+})

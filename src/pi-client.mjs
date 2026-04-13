@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import {
   appendLog,
-  runShellCommand,
   writeTextFile,
 } from './pi-repo.mjs'
+import { runSdkTurn } from './pi-sdk-turn.mjs'
 
 function truncateForNotes(text) {
   const trimmed = text.trim()
@@ -40,7 +40,7 @@ async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
     'Prompt preview:',
     prompt,
     '',
-    'Mock mode does not edit files. Point PI_TRANSPORT=adapter at a real adapter to enable unattended work.',
+    'Mock mode does not edit files. Use default sdk transport for real unattended work.',
   ].join('\n')
 
   await writeTextFile(config.lastAgentOutputFile, `${output}\n`)
@@ -71,111 +71,60 @@ async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
   }
 }
 
-function parseAdapterResponse(stdout) {
-  const trimmed = stdout.trim()
-  if (trimmed === '') {
-    throw new Error('Adapter returned no JSON on stdout.')
-  }
-
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean)
-    const lastLine = lines.at(-1)
-    if (!lastLine) {
-      throw new Error('Adapter returned no parseable JSON on stdout.')
-    }
-    return JSON.parse(lastLine)
-  }
-}
-
-async function runAdapterTurn({ config, model, sessionId, sessionFile, prompt, iteration, retryCount, reason }) {
-  if (config.adapterCommand.trim() === '') {
-    throw new Error('PI_TRANSPORT=adapter requires PI_ADAPTER_COMMAND to be set.')
-  }
-
-  const request = {
-    sessionId,
-    sessionFile,
-    prompt,
-    cwd: config.cwd,
-    taskFile: config.taskFile,
-    instructionsFile: config.instructionsFile,
-    developerInstructionsFile: config.developerInstructionsFile,
-    testerInstructionsFile: config.testerInstructionsFile,
-    runtimeDir: config.runRuntimeDir || config.piRuntimeDir,
-    piCli: config.piCli,
-    model: model ?? config.piModel,
-    tools: config.piTools,
-    thinking: config.piThinking,
-    noExtensions: config.piNoExtensions,
-    noSkills: config.piNoSkills,
-    noPromptTemplates: config.piNoPromptTemplates,
-    noThemes: config.piNoThemes,
-    streamTerminal: config.streamTerminal,
-    loopRepeatThreshold: config.loopRepeatThreshold,
-    samePathRepeatThreshold: config.samePathRepeatThreshold,
-    continueAfterSeconds: config.continueAfterSeconds,
-    toolContinueAfterSeconds: config.toolContinueAfterSeconds,
-    continueMessage: config.continueMessage,
-    noEventTimeoutSeconds: config.noEventTimeoutSeconds,
-    toolNoEventTimeoutSeconds: config.toolNoEventTimeoutSeconds,
-    metadata: {
-      iteration,
-      retryCount,
-      reason,
-    },
-  }
-
+async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prompt, iteration, retryCount, reason }) {
   await appendLog(
     config.logFile,
-    `Starting adapter turn via: ${config.adapterCommand} iteration=${iteration} retry=${retryCount} reason=${reason}`
+    `Starting SDK turn iteration=${iteration} retry=${retryCount} reason=${reason}`
   )
-  const result = await runShellCommand({
-    cwd: config.cwd,
-    command: config.adapterCommand,
-    timeoutSeconds: config.agentTimeoutSeconds,
-    stdinText: `${JSON.stringify(request)}\n`,
-    streamStderrToParent: config.streamTerminal,
-  })
 
-  await writeTextFile(config.lastAgentOutputFile, result.combinedOutput)
-
-  if (result.timedOut) {
-    await appendLog(config.logFile, 'Adapter turn timed out')
-    return {
-      sessionId: sessionId || '',
-      sessionFile: sessionFile || '',
-      status: 'timed_out',
-      exitCode: result.exitCode,
-      timedOut: true,
-      durationSeconds: result.durationSeconds,
-      output: result.combinedOutput,
-      notes: 'Adapter process exceeded the configured timeout.',
-      role: '',
+  const startedAt = Date.now()
+  let response
+  try {
+    response = await runSdkTurn({
+      sessionId,
+      sessionFile,
+      prompt,
+      cwd: config.cwd,
+      taskFile: config.taskFile,
+      instructionsFile: config.instructionsFile,
+      developerInstructionsFile: config.developerInstructionsFile,
+      testerInstructionsFile: config.testerInstructionsFile,
+      runtimeDir: config.runRuntimeDir || config.piRuntimeDir,
+      piCli: config.piCli,
       model: model ?? config.piModel,
-      toolCalls: 0,
-      toolErrors: 0,
-      messageUpdates: 0,
-      stopReason: '',
-      loopDetected: false,
-      loopSignature: '',
-      terminalReason: 'agent_timeout',
-    }
-  }
-
-  if (result.exitCode !== 0) {
-    await appendLog(config.logFile, `Adapter turn failed with exit code ${result.exitCode}`)
-    await writeTextFile(config.lastAgentOutputFile, result.combinedOutput)
+      tools: config.piTools,
+      thinking: config.piThinking,
+      noExtensions: config.piNoExtensions,
+      noSkills: config.piNoSkills,
+      noPromptTemplates: config.piNoPromptTemplates,
+      noThemes: config.piNoThemes,
+      streamTerminal: config.streamTerminal,
+      loopRepeatThreshold: config.loopRepeatThreshold,
+      samePathRepeatThreshold: config.samePathRepeatThreshold,
+      continueAfterSeconds: config.continueAfterSeconds,
+      toolContinueAfterSeconds: config.toolContinueAfterSeconds,
+      continueMessage: config.continueMessage,
+      noEventTimeoutSeconds: config.noEventTimeoutSeconds,
+      toolNoEventTimeoutSeconds: config.toolNoEventTimeoutSeconds,
+      metadata: {
+        iteration,
+        retryCount,
+        reason,
+      },
+    })
+  } catch (error) {
+    const notes = error instanceof Error ? error.message : String(error)
+    await writeTextFile(config.lastAgentOutputFile, `${notes}\n`)
+    await appendLog(config.logFile, `SDK turn failed: ${notes}`)
     return {
       sessionId: sessionId || '',
       sessionFile: sessionFile || '',
       status: 'failed',
-      exitCode: result.exitCode,
+      exitCode: 1,
       timedOut: false,
-      durationSeconds: result.durationSeconds,
-      output: result.combinedOutput,
-      notes: truncateForNotes(result.combinedOutput) || 'Adapter exited non-zero.',
+      durationSeconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
+      output: '',
+      notes,
       role: '',
       model: model ?? config.piModel,
       toolCalls: 0,
@@ -184,29 +133,22 @@ async function runAdapterTurn({ config, model, sessionId, sessionFile, prompt, i
       stopReason: '',
       loopDetected: false,
       loopSignature: '',
-      terminalReason: 'adapter_failed',
+      terminalReason: 'sdk_failed',
     }
   }
 
-  const response = parseAdapterResponse(result.stdout)
   await writeTextFile(config.lastAgentOutputFile, formatLastAgentOutput(response))
-  const nextSessionId = String(response.sessionId ?? sessionId ?? '')
-  const nextSessionFile = String(response.sessionFile ?? sessionFile ?? '')
-  const status = String(response.status ?? 'success')
-  const output = String(response.output ?? result.combinedOutput)
-  const notes = String(response.notes ?? truncateForNotes(output))
-
-  await appendLog(config.logFile, `Adapter turn completed with status ${status}`)
+  await appendLog(config.logFile, `SDK turn completed with status ${String(response.status ?? 'success')}`)
 
   return {
-    sessionId: nextSessionId,
-    sessionFile: nextSessionFile,
-    status,
-    exitCode: result.exitCode,
-    timedOut: false,
-    durationSeconds: result.durationSeconds,
-    output,
-    notes,
+    sessionId: String(response.sessionId ?? sessionId ?? ''),
+    sessionFile: String(response.sessionFile ?? sessionFile ?? ''),
+    status: String(response.status ?? 'success'),
+    exitCode: 0,
+    timedOut: String(response.status ?? '') === 'timed_out',
+    durationSeconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
+    output: String(response.output ?? ''),
+    notes: String(response.notes ?? ''),
     role: String(response.role ?? ''),
     model: String(response.model ?? model ?? config.piModel ?? ''),
     toolCalls: Number.isFinite(Number(response.toolCalls)) ? Number(response.toolCalls) : 0,
@@ -224,9 +166,9 @@ export async function runAgentTurn(args) {
     return await runMockTurn(args)
   }
 
-  if (args.config.transport === 'adapter') {
-    return await runAdapterTurn(args)
+  if (args.config.transport === 'sdk') {
+    return await runSdkTransportTurn(args)
   }
 
-  throw new Error(`Unsupported PI transport "${args.config.transport}". Expected "mock" or "adapter".`)
+  throw new Error(`Unsupported PI transport "${args.config.transport}". Expected "mock" or "sdk".`)
 }

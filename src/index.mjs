@@ -12,3 +12,4 @@ export {
 export { clearHarnessHistory, collectHistoryTargets } from './pi-history.mjs'
 export { collectLargeFileWarnings } from './pi-repo.mjs'
 export { runAgentTurn } from './pi-client.mjs'
+export { createSdkSession, createTools, normalizeToolNames, resolveModel, runSdkTurn, runSdkTurnWithPi, splitModelSpec } from './pi-sdk-turn.mjs'

@@ -174,6 +174,8 @@ If the repo is not ready for a real run yet, at minimum run:
 PI_CONFIG_FILE=pi.config.json PI_TRANSPORT=mock PI_TEST_CMD= pi-harness once
 ```
 
+Default transport is `sdk`.
+
 If setup validation fails, fix the config rather than leaving a half-configured repo.
 
 The harness should fail fast if:

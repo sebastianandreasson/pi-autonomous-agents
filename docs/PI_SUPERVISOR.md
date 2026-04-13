@@ -28,7 +28,7 @@ Main package files:
 
 - `src/pi-supervisor.mjs`: controller
 - `src/pi-client.mjs`: transport layer
-- `src/pi-rpc-adapter.mjs`: built-in adapter from supervisor JSON to `pi --mode rpc`
+- `src/pi-sdk-turn.mjs`: in-process PI SDK turn runner for `transport: "sdk"`
 - `src/pi-config.mjs`: config loader
 - `src/pi-repo.mjs`: repo helpers, verification runner, and optional legacy git finalize step
 - `src/pi-telemetry.mjs`: telemetry writer/reader
@@ -98,67 +98,9 @@ For unattended inner-loop work, `testCommand` should be a bounded smoke gate rat
 The supervisor supports:
 
 - `PI_TRANSPORT=mock`
-- `PI_TRANSPORT=adapter`
+- `PI_TRANSPORT=sdk` (default)
 
-The built-in adapter command is typically:
-
-```bash
-pi-harness adapter
-```
-
-When using `adapter`, set `PI_ADAPTER_COMMAND` to a command that:
-
-1. Reads one JSON request from `stdin`
-2. Talks to PI RPC or your own PI wrapper
-3. Writes one JSON response to `stdout`
-4. Exits with code `0` on success
-
-Request shape:
-
-```json
-{
-  "sessionId": "existing-or-empty",
-  "sessionFile": "/absolute/path/to/session.jsonl",
-  "prompt": "controller prompt",
-  "cwd": "/absolute/repo/path",
-  "taskFile": "/absolute/repo/path/TODOS.md",
-  "instructionsFile": "/absolute/repo/path/pi/DEVELOPER.md",
-  "runtimeDir": "/absolute/repo/path/.pi-runtime",
-  "piCli": "pi",
-  "model": "local/model-name",
-  "tools": "read,edit,write,find,ls,bash",
-  "thinking": "",
-  "noExtensions": false,
-  "noSkills": false,
-  "noPromptTemplates": false,
-  "noThemes": true,
-  "metadata": {
-    "iteration": 1,
-    "retryCount": 0,
-    "reason": "main_workflow"
-  }
-}
-```
-
-Response shape:
-
-```json
-{
-  "sessionId": "stable-session-id",
-  "sessionFile": "/absolute/path/to/session.jsonl",
-  "status": "success",
-  "output": "agent output text",
-  "notes": "short controller note"
-}
-```
-
-Allowed response `status` values:
-
-- `success`
-- `stalled`
-- `timed_out`
-- `failed`
-- `canceled`
+`sdk` runs PI in-process via Node SDK.
 
 ## Git Finalization
 
@@ -215,16 +157,16 @@ The capture command must write a JSON manifest at `PI_VISUAL_MANIFEST_FILE` with
 
 ## Loop Mitigation
 
-The built-in adapter mitigates obvious local loops by watching PI RPC tool events:
+SDK transport mitigates obvious local loops by watching tool events:
 
 - repeated identical tool calls are aborted
 - repeated same-path churn is aborted
 - a soft `continue` can be sent after inactivity
 - a separate tool-aware watchdog can tolerate long-running `bash` or browser work without treating the turn as dead
 - a hard no-event timeout aborts a wedged turn instead of hanging indefinitely
-- parent-loss shutdown tears down the owned supervisor/adapter/PI child tree instead of allowing orphaned background runs
+- parent-loss shutdown tears down owned supervisor child work instead of allowing orphaned background runs
 
-Important: terminal streaming does not reset the heartbeat by itself. The watchdog keys off PI RPC events and active tool state, not raw shell output.
+Important: terminal streaming does not reset the heartbeat by itself. The watchdog keys off SDK agent events and active tool state, not raw shell output.
 
 ## Telemetry
 

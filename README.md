@@ -29,7 +29,7 @@ The package ships a top-level [SETUP.md](./SETUP.md) specifically for that workf
 ## What This Package Owns
 
 - unattended loop orchestration
-- PI adapter integration
+- PI SDK integration
 - config loading
 - prompt assembly
 - verification/tester/visual-review handoff
@@ -82,7 +82,6 @@ pi-harness run
 pi-harness report
 pi-harness clear-history
 pi-harness visual-once
-pi-harness adapter
 pi-harness visual-review-worker
 ```
 
@@ -174,7 +173,6 @@ Common fields in `pi.config.json`:
 - `developerInstructionsFile`
 - `testerInstructionsFile`
 - `transport`
-- `adapterCommand`
 - `piModel`
 - `models`
 - `roleModels`
@@ -192,7 +190,7 @@ Common fields in `pi.config.json`:
 
 Key defaults:
 
-- `transport`: `adapter`
+- `transport`: `sdk`
 - `commitMode`: `agent`
 - `promptMode`: `compact`
 - `piTools`: `read,edit,write,find,ls,bash`
@@ -209,7 +207,7 @@ The package is optimized for local models by default:
 - changed-file lists and feedback excerpts are capped
 - prompts prefer `read` for source inspection
 - shell is intended for `git`, tests, and narrow diagnostics
-- the adapter warns on obvious oversized shell-based file reads
+- SDK transport carries forward oversized shell-read warnings and loop/timeout guards
 - the supervisor emits large-file/spec warnings when touched files are getting risky
 
 This is deliberate. Large monolith files, huge e2e specs, and broad TODO items are one of the main causes of local-model drift and retry loops.
@@ -232,7 +230,7 @@ Recent versions of the package isolate each run more aggressively:
 - in-progress iteration state persisted before agent work starts
 - stale run locks recovered when the owning PID is gone
 - timeout cleanup kills the full spawned process group, not only the direct child
-- parent-death watchers shut down orphaned supervisor and adapter layers instead of letting them continue under `PPID 1`
+- parent-death watchers shut down orphaned supervisor layers instead of letting them continue under `PPID 1`
 
 That is meant to prevent orphaned timed-out agents or concurrent supervisors from corrupting shared state.
 
@@ -282,7 +280,7 @@ That clears configured harness runtime/history artifacts and verifies they are g
 - [SETUP.md](./SETUP.md)
   Agent-facing setup instructions for consuming repos.
 - [docs/PI_SUPERVISOR.md](./docs/PI_SUPERVISOR.md)
-  More detailed flow, adapter, and runtime documentation.
+  More detailed flow, SDK transport, and runtime documentation.
 - [templates/PROJECT_SETUP.md](./templates/PROJECT_SETUP.md)
   Minimal consuming-repo layout summary.
 

@@ -58,7 +58,7 @@ test('appendTelemetry writes structured telemetry columns', async () => {
     phase: 'Phase 1',
     kind: 'tester_agent',
     status: 'success',
-    transport: 'adapter',
+    transport: 'sdk',
     sessionId: 'session-1',
     timedOut: false,
     exitCode: 0,

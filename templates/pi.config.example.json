@@ -1,6 +1,5 @@
 {
-  "transport": "adapter",
-  "adapterCommand": "pi-harness adapter",
+  "transport": "sdk",
   "taskFile": "TODOS.md",
   "developerInstructionsFile": "pi/DEVELOPER.md",
   "testerInstructionsFile": "pi/TESTER.md",

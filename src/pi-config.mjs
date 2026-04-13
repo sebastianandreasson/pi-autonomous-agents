@@ -196,7 +196,6 @@ export function loadConfig(mode = 'once') {
   const cwd = process.cwd()
   const repoConfig = readRepoConfig(cwd)
   const file = repoConfig.values
-  const bundledAdapterCommand = 'pi-harness adapter'
   const bundledDeveloperInstructionsFile = path.join(packageRoot, 'templates', 'DEVELOPER.md')
   const bundledTesterInstructionsFile = path.join(packageRoot, 'templates', 'TESTER.md')
   const modelProfiles = readObject('models', file.models, {})
@@ -222,13 +221,14 @@ export function loadConfig(mode = 'once') {
       : bundledTesterInstructionsFile
   )
 
+  const transport = readString('PI_TRANSPORT', file.transport, 'sdk')
+
   return {
     cwd,
     configFile: repoConfig.configFile,
     mode: mode === 'run' ? 'run' : 'once',
-    transport: readString('PI_TRANSPORT', file.transport, 'adapter'),
+    transport,
     agentName: readString('PI_AGENT_NAME', file.agentName, 'PI'),
-    adapterCommand: readString('PI_ADAPTER_COMMAND', file.adapterCommand, bundledAdapterCommand),
     taskFile: resolveFromCwd(cwd, 'PI_TASK_FILE', file.taskFile, 'TODOS.md'),
     instructionsFile: resolveInstructionsFile(cwd, 'PI_INSTRUCTIONS_FILE', file.instructionsFile, bundledDeveloperInstructionsFile),
     developerInstructionsFile,

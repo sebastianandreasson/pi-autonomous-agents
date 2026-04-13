@@ -13,10 +13,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const packageRoot = path.resolve(scriptDir, '..')
 const cliFile = path.join(packageRoot, 'src', 'cli.mjs')
 const fakePiFile = path.join(packageRoot, 'test', 'fixtures', 'fake-pi.mjs')
-
-function shellQuote(value) {
-  return JSON.stringify(String(value))
-}
+const fakeSdkFile = path.join(packageRoot, 'test', 'fixtures', 'fake-pi-sdk.mjs')
 
 async function makeTempRepo() {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-lifecycle-'))
@@ -44,23 +41,39 @@ async function waitFor(predicate, {
   throw new Error(errorMessage)
 }
 
-async function writeTestRepo(cwd) {
-  const readyFile = path.join(cwd, 'fake-pi.ready')
-  const pidFile = path.join(cwd, 'fake-pi.pid')
-  const adapterCommand = `${shellQuote(process.execPath)} ${shellQuote(cliFile)} adapter`
+function shellQuote(value) {
+  return JSON.stringify(String(value))
+}
 
-  await fs.writeFile(path.join(cwd, 'TODOS.md'), '- [ ] Lifecycle test\n', 'utf8')
+async function writeTestRepo(cwd) {
+  const verifierPidFile = path.join(cwd, 'verifier.pid')
+  const verifierReadyFile = path.join(cwd, 'verifier.ready')
+  const verificationCode = [
+    `const fs=require('node:fs')`,
+    `fs.writeFileSync(process.env.VERIFIER_PID_FILE,String(process.pid))`,
+    `fs.writeFileSync(process.env.VERIFIER_READY_FILE,'ready')`,
+    `setInterval(()=>{},1000)`,
+  ].join(';')
+  const verificationCommand = `${shellQuote(process.execPath)} -e ${shellQuote(verificationCode)}`
+
+  await fs.writeFile(path.join(cwd, 'TODOS.md'), '## Phase 1\n\n- [ ] Lifecycle test\n', 'utf8')
   await fs.writeFile(path.join(cwd, 'DEVELOPER.md'), 'Developer instructions.\n', 'utf8')
   await fs.writeFile(path.join(cwd, 'TESTER.md'), 'Tester instructions.\n', 'utf8')
   await fs.writeFile(path.join(cwd, 'pi.config.json'), `${JSON.stringify({
-    transport: 'adapter',
-    adapterCommand,
+    transport: 'sdk',
     taskFile: 'TODOS.md',
     developerInstructionsFile: 'DEVELOPER.md',
     testerInstructionsFile: 'TESTER.md',
     piCli: fakePiFile,
     piModel: 'fake-model',
-    testCommand: '',
+    roleModels: {
+      developer: 'fake-model',
+      developerRetry: 'fake-model',
+      developerFix: 'fake-model',
+      tester: 'fake-model',
+      testerCommit: 'fake-model',
+    },
+    testCommand: verificationCommand,
     streamTerminal: false,
     continueAfterSeconds: 3600,
     noEventTimeoutSeconds: 3600,
@@ -73,22 +86,23 @@ async function writeTestRepo(cwd) {
   execFileSync('git', ['commit', '-m', 'initial'], { cwd, stdio: 'ignore' })
 
   return {
-    readyFile,
-    pidFile,
+    verifierPidFile,
+    verifierReadyFile,
   }
 }
 
-test('killing the top-level harness process tears down all descendants', async (t) => {
+test('killing the top-level harness process tears down sdk supervisor and owned verification child', async (t) => {
   const cwd = await makeTempRepo()
-  const { readyFile, pidFile } = await writeTestRepo(cwd)
+  const { verifierPidFile, verifierReadyFile } = await writeTestRepo(cwd)
   const activeRunFile = path.join(cwd, '.pi-runtime', 'active-run.json')
   const child = spawn(process.execPath, [cliFile, 'run'], {
     cwd,
     env: {
       ...process.env,
       PI_CONFIG_FILE: 'pi.config.json',
-      FAKE_PI_READY_FILE: readyFile,
-      FAKE_PI_PID_FILE: pidFile,
+      PI_SDK_MODULE: fakeSdkFile,
+      VERIFIER_PID_FILE: verifierPidFile,
+      VERIFIER_READY_FILE: verifierReadyFile,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -102,15 +116,14 @@ test('killing the top-level harness process tears down all descendants', async (
   })
 
   let supervisorPid = 0
-  let adapterPid = 0
-  let fakePiPid = 0
+  let verifierPid = 0
 
   t.after(async () => {
     try {
       process.kill(child.pid, 'SIGKILL')
     } catch {}
 
-    for (const pid of [supervisorPid, adapterPid, fakePiPid]) {
+    for (const pid of [supervisorPid, verifierPid]) {
       try {
         process.kill(pid, 'SIGKILL')
       } catch {}
@@ -121,20 +134,17 @@ test('killing the top-level harness process tears down all descendants', async (
 
   await waitFor(async () => {
     try {
-      await fs.access(readyFile)
+      await fs.access(verifierReadyFile)
       return true
     } catch {
       return false
     }
   }, {
-    errorMessage: `Fake PI process never reached ready state.\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+    errorMessage: `Verification child never reached ready state.\nstdout:\n${stdout}\nstderr:\n${stderr}`,
   })
 
-  fakePiPid = Number.parseInt((await fs.readFile(pidFile, 'utf8')).trim(), 10)
-  assert.ok(Number.isInteger(fakePiPid) && fakePiPid > 0, 'expected fake PI pid to be recorded')
-  const readyState = JSON.parse(await fs.readFile(readyFile, 'utf8'))
-  adapterPid = Number.parseInt(String(readyState.ppid ?? ''), 10)
-  assert.ok(Number.isInteger(adapterPid) && adapterPid > 0, 'expected fake PI parent pid to identify the adapter')
+  verifierPid = Number.parseInt((await fs.readFile(verifierPidFile, 'utf8')).trim(), 10)
+  assert.ok(Number.isInteger(verifierPid) && verifierPid > 0, 'expected verification pid to be recorded')
 
   await waitFor(async () => {
     const activeRun = await readJsonFile(activeRunFile, null)
@@ -146,9 +156,9 @@ test('killing the top-level harness process tears down all descendants', async (
 
   process.kill(child.pid, 'SIGKILL')
 
-  await waitFor(() => [supervisorPid, adapterPid, fakePiPid].every((pid) => !isProcessRunning(pid)), {
+  await waitFor(() => [supervisorPid, verifierPid].every((pid) => !isProcessRunning(pid)), {
     timeoutMs: 15_000,
     intervalMs: 200,
-    errorMessage: `Descendants still running after parent death: ${[supervisorPid, adapterPid, fakePiPid].filter((pid) => isProcessRunning(pid)).join(', ')}`,
+    errorMessage: `Processes still running after parent death: ${[supervisorPid, verifierPid].filter((pid) => isProcessRunning(pid)).join(', ')}`,
   })
 })
