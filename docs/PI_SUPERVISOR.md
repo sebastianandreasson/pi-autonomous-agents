@@ -35,6 +35,8 @@ Main package files:
 - `src/pi-prompts.mjs`: default prompt builders
 - `src/pi-visual-review.mjs`: multimodal visual-review worker
 - `src/pi-visual-once.mjs`: one-shot manual visual review runner
+- `src/pi-visualizer.mjs`: local web UI for orchestration flow and active stage
+- `src/pi-visualizer-shared.mjs`: flow-state helpers for visualizer
 - `src/pi-report.mjs`: telemetry summary report
 - `templates/DEVELOPER.md`: default developer-role instructions template
 - `templates/TESTER.md`: default tester-role instructions template
@@ -46,9 +48,12 @@ pi-harness once
 pi-harness run
 pi-harness report
 pi-harness visual-once
+pi-harness visualize
 ```
 
 The package reads `PI_CONFIG_FILE` if provided. Otherwise it falls back to the bundled generic `pi.config.json`.
+
+`pi-harness visualize` serves a polling web UI over local HTTP. Defaults: `PI_VISUALIZER_HOST=127.0.0.1`, `PI_VISUALIZER_PORT=4317`.
 
 ## Config Contract
 

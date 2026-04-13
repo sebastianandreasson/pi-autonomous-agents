@@ -71,7 +71,8 @@ Typical scripts:
     "pi:once": "PI_CONFIG_FILE=pi.config.json pi-harness once",
     "pi:run": "PI_CONFIG_FILE=pi.config.json pi-harness run",
     "pi:report": "PI_CONFIG_FILE=pi.config.json pi-harness report",
-    "pi:visual:once": "PI_CONFIG_FILE=pi.config.json pi-harness visual-once"
+    "pi:visual:once": "PI_CONFIG_FILE=pi.config.json pi-harness visual-once",
+    "pi:visualize": "PI_CONFIG_FILE=pi.config.json pi-harness visualize"
   }
 }
 ```
@@ -86,6 +87,7 @@ pi-harness run
 pi-harness report
 pi-harness clear-history
 pi-harness visual-once
+pi-harness visualize
 pi-harness visual-review-worker
 ```
 
@@ -261,6 +263,8 @@ Useful files during a run:
 - `.pi-runtime/runs/<runId>/...`
 
 `pi-harness report` summarizes recent telemetry and surfaces things like terminal reasons and large-file warnings.
+
+`pi-harness visualize` starts a lightweight local web UI for orchestration flow. By default it listens on `127.0.0.1:4317`. Override with `PI_VISUALIZER_HOST` and `PI_VISUALIZER_PORT`.
 
 ## Visual Review Contract
 

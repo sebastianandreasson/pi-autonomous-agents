@@ -337,6 +337,15 @@ async function runAgentInvocation({
   sessionId,
   sessionFile,
 }) {
+  await updateRunOwnership(config, {
+    status: 'agent_running',
+    iteration,
+    phase,
+    activeKind: kind,
+    activeRole: role,
+    activeReason: reason,
+  })
+
   const beforeSnapshot = getRepoSnapshot(config.cwd)
   const resolvedModel = resolveRoleModel(config, role)
   const promptSnapshot = [
@@ -513,6 +522,15 @@ async function runHarnessGitFinalize({
   phase,
   commitPlan,
 }) {
+  await updateRunOwnership(config, {
+    status: 'git_finalize_running',
+    iteration,
+    phase,
+    activeKind: 'git_finalize',
+    activeRole: '',
+    activeReason: '',
+  })
+
   const beforeSnapshot = getRepoSnapshot(config.cwd)
   const dirtyFiles = new Set(listChangedFiles(config.cwd))
   const requestedFiles = Array.isArray(commitPlan.files) ? commitPlan.files.filter(Boolean) : []
@@ -624,6 +642,15 @@ async function runHarnessGitFinalize({
 }
 
 async function runVerificationStep({ config, iteration, phase, kind }) {
+  await updateRunOwnership(config, {
+    status: 'verification_running',
+    iteration,
+    phase,
+    activeKind: kind,
+    activeRole: '',
+    activeReason: '',
+  })
+
   const beforeSnapshot = getRepoSnapshot(config.cwd)
   const verification = await runVerification(config)
   const afterSnapshot = getRepoSnapshot(config.cwd)
@@ -988,6 +1015,15 @@ async function runTesterCommitTurn({
 }
 
 async function runVisualReview({ config, iteration, phase, task, changedFiles }) {
+  await updateRunOwnership(config, {
+    status: 'visual_capture_running',
+    iteration,
+    phase,
+    activeKind: 'visual_capture',
+    activeRole: '',
+    activeReason: '',
+  })
+
   const capture = await runVisualCapture(config, {
     iteration,
     phase,
@@ -1034,6 +1070,15 @@ async function runVisualReview({ config, iteration, phase, task, changedFiles })
         : `visual_capture_failed=true ${capture.output.trim().split('\n').slice(-8).join(' ')}`.trim(),
     }
   }
+
+  await updateRunOwnership(config, {
+    status: 'visual_review_running',
+    iteration,
+    phase,
+    activeKind: 'visual_review',
+    activeRole: 'visualReview',
+    activeReason: '',
+  })
 
   const visualReviewModel = resolveRoleModel(config, 'visualReview')
   const reviewRequest = {
@@ -1196,6 +1241,9 @@ async function runIteration({ config, state, iteration }) {
     iteration,
     phase,
     task,
+    activeKind: '',
+    activeRole: '',
+    activeReason: '',
   })
   const canResumePriorSession = (
     state.lastTransport === config.transport
@@ -1576,6 +1624,9 @@ async function runIteration({ config, state, iteration }) {
     task,
     lastCompletedIteration: iteration,
     lastStatus: finalStatus,
+    activeKind: '',
+    activeRole: '',
+    activeReason: '',
   })
 
   await appendLog(
@@ -1728,6 +1779,9 @@ async function main() {
       await updateRunOwnership(config, {
         status: 'starting_iteration',
         iteration,
+        activeKind: '',
+        activeRole: '',
+        activeReason: '',
       })
       const result = await runIteration({ config, state, iteration })
       await writeIterationSummary(config, result.iterationSummary ?? result.summary)
@@ -1754,6 +1808,9 @@ async function main() {
     await updateRunOwnership(config, {
       status: stopRequested ? 'stopped' : 'finished',
       heartbeatAt: timestamp(),
+      activeKind: '',
+      activeRole: '',
+      activeReason: '',
     })
     await releaseRunLock(config.activeRunFile, runId)
     delete process.env.PI_RUN_ID

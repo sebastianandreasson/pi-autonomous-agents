@@ -18,6 +18,7 @@ const COMMANDS = new Map([
   ['report', 'pi-report.mjs'],
   ['clear-history', 'pi-clear-history.mjs'],
   ['visual-once', 'pi-visual-once.mjs'],
+  ['visualize', 'pi-visualizer.mjs'],
   ['visual-review-worker', 'pi-visual-review.mjs'],
 ])
 
