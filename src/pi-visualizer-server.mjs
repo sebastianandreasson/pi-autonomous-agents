@@ -43,6 +43,25 @@ async function readJsonlTail(filePath, maxItems = 200) {
   }
 }
 
+const MAX_DIFF_FILES = 10
+const MAX_DIFF_CHARS_PER_FILE = 12000
+const MAX_DIFF_TOTAL_CHARS = 40000
+const REPO_DIFF_CACHE_MS = 2000
+
+let repoDiffCache = {
+  cwd: '',
+  updatedAt: 0,
+  result: [],
+}
+
+function clampText(text, maxChars) {
+  const value = String(text ?? '')
+  if (value.length <= maxChars) {
+    return value
+  }
+  return `${value.slice(0, maxChars - 16)}\n... [truncated]`
+}
+
 async function parseTodos(taskFile, activeTaskText = '') {
   try {
     const raw = await fs.readFile(taskFile, 'utf8')
@@ -113,9 +132,19 @@ async function parseTodos(taskFile, activeTaskText = '') {
 }
 
 function readRepoDiff(cwd) {
+  const now = Date.now()
+  if (repoDiffCache.cwd === cwd && (now - repoDiffCache.updatedAt) < REPO_DIFF_CACHE_MS) {
+    return repoDiffCache.result
+  }
+
   try {
-    const status = execFileSync('git', ['status', '--short'], { cwd, encoding: 'utf8' }).trim()
+    const status = execFileSync('git', ['status', '--short'], {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+    }).trim()
     if (status === '') {
+      repoDiffCache = { cwd, updatedAt: now, result: [] }
       return []
     }
 
@@ -123,19 +152,33 @@ function readRepoDiff(cwd) {
       .split('\n')
       .map((line) => line.slice(3).trim())
       .filter(Boolean)
+      .slice(0, MAX_DIFF_FILES)
 
-    return files.map((file) => {
+    let remainingChars = MAX_DIFF_TOTAL_CHARS
+    const result = files.map((file) => {
       let diff = ''
       try {
-        diff = execFileSync('git', ['diff', '--no-ext-diff', '--unified=1', '--', file], { cwd, encoding: 'utf8' }).trim()
+        diff = execFileSync('git', ['diff', '--no-ext-diff', '--unified=1', '--', file], {
+          cwd,
+          encoding: 'utf8',
+          maxBuffer: 1024 * 1024,
+        }).trim()
       } catch {
         diff = ''
       }
+
+      const allowedChars = Math.max(500, Math.min(MAX_DIFF_CHARS_PER_FILE, remainingChars))
+      const truncatedDiff = clampText(diff, allowedChars)
+      remainingChars = Math.max(0, remainingChars - truncatedDiff.length)
+
       return {
         file,
-        diff,
+        diff: truncatedDiff,
       }
     })
+
+    repoDiffCache = { cwd, updatedAt: now, result }
+    return result
   } catch {
     return []
   }
@@ -238,10 +281,11 @@ export async function buildSnapshot(config, queryRunId = '') {
     telemetry,
   })
 
-  const activeTaskText = String(activeRun?.task ?? summary?.task ?? '').trim()
+  const selectedRunIsActive = selectedRunId !== '' && String(activeRun?.runId ?? '') === selectedRunId
+  const activeTaskText = String((selectedRunIsActive ? activeRun?.task : state?.inProgress?.task) ?? summary?.task ?? '').trim()
   const [todos, currentEdits] = await Promise.all([
     parseTodos(config.taskFile, activeTaskText),
-    Promise.resolve(readRepoDiff(config.cwd)),
+    Promise.resolve(selectedRunIsActive ? readRepoDiff(config.cwd) : []),
   ])
 
   return {
