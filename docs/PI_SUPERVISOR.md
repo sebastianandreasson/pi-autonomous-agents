@@ -30,7 +30,7 @@ Main package files:
 - `src/pi-client.mjs`: transport layer
 - `src/pi-sdk-turn.mjs`: in-process PI SDK turn runner for `transport: "sdk"`
 - `src/pi-config.mjs`: config loader
-- `src/pi-repo.mjs`: repo helpers, verification runner, and optional legacy git finalize step
+- `src/pi-repo.mjs`: repo helpers, verification runner, and git finalize helpers
 - `src/pi-telemetry.mjs`: telemetry writer/reader
 - `src/pi-prompts.mjs`: default prompt builders
 - `src/pi-visual-review.mjs`: multimodal visual-review worker
@@ -100,7 +100,7 @@ The supervisor supports:
 - `PI_TRANSPORT=mock`
 - `PI_TRANSPORT=sdk` (default)
 
-`sdk` runs PI in-process via Node SDK.
+`sdk` runs PI in-process via Node SDK. `mock` preserves harness flow but skips real agent work.
 
 ## Git Finalization
 
@@ -157,7 +157,7 @@ The capture command must write a JSON manifest at `PI_VISUAL_MANIFEST_FILE` with
 
 ## Loop Mitigation
 
-SDK transport mitigates obvious local loops by watching tool events:
+SDK transport mitigates obvious local loops by watching agent and tool events:
 
 - repeated identical tool calls are aborted
 - repeated same-path churn is aborted

@@ -29,7 +29,7 @@ The package ships a top-level [SETUP.md](./SETUP.md) specifically for that workf
 ## What This Package Owns
 
 - unattended loop orchestration
-- PI SDK integration
+- PI Node SDK integration
 - config loading
 - prompt assembly
 - verification/tester/visual-review handoff
@@ -59,6 +59,10 @@ pi/
 ```
 
 Typical scripts:
+
+- `pi:once` / `pi:run` use default `sdk` transport
+- `pi:mock` skips real agent execution
+
 
 ```json
 {
@@ -114,6 +118,7 @@ The package supports:
 - one default visual-review model via `visualReviewModel`
 - optional per-role overrides via `roleModels`
 - per-model endpoint config in `models`
+- default transport via `transport` (`sdk` or `mock`)
 
 Typical pattern:
 
@@ -172,7 +177,7 @@ Common fields in `pi.config.json`:
 - `taskFile`
 - `developerInstructionsFile`
 - `testerInstructionsFile`
-- `transport`
+- `transport` (`sdk` or `mock`)
 - `piModel`
 - `models`
 - `roleModels`
@@ -280,7 +285,7 @@ That clears configured harness runtime/history artifacts and verifies they are g
 - [SETUP.md](./SETUP.md)
   Agent-facing setup instructions for consuming repos.
 - [docs/PI_SUPERVISOR.md](./docs/PI_SUPERVISOR.md)
-  More detailed flow, SDK transport, and runtime documentation.
+  More detailed flow, transport, telemetry, and runtime documentation.
 - [templates/PROJECT_SETUP.md](./templates/PROJECT_SETUP.md)
   Minimal consuming-repo layout summary.
 

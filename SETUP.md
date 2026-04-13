@@ -82,6 +82,9 @@ Minimal example:
 
 5. Add package scripts.
 
+- `pi:once` and `pi:run` should use default `sdk` transport unless the repo has a very specific reason not to.
+- `pi:mock` is for setup validation when real PI execution is not ready yet.
+
 Add these scripts to the consuming repo `package.json`, adapting only if necessary:
 
 ```json
@@ -174,7 +177,7 @@ If the repo is not ready for a real run yet, at minimum run:
 PI_CONFIG_FILE=pi.config.json PI_TRANSPORT=mock PI_TEST_CMD= pi-harness once
 ```
 
-Default transport is `sdk`.
+Default transport is `sdk`. Only set `PI_TRANSPORT` when you explicitly want `mock`.
 
 If setup validation fails, fix the config rather than leaving a half-configured repo.
 
