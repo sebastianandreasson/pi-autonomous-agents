@@ -36,8 +36,9 @@ async function readJsonlTail(filePath, maxItems = 200) {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
-      .slice(-maxItems)
       .map((line) => JSON.parse(line))
+      .sort((left, right) => String(left?.timestamp ?? '').localeCompare(String(right?.timestamp ?? '')))
+      .slice(-maxItems)
   } catch {
     return []
   }
@@ -78,51 +79,27 @@ async function parseTodos(taskFile, activeTaskText = '') {
         if (level === 2) {
           currentPhase = text
         }
-        items.push({
-          id: `line-${index + 1}`,
-          kind: 'heading',
-          lineNumber: index + 1,
-          level,
-          text,
-          phase: currentPhase || text,
-          raw: line,
-          checked: false,
-          active: false,
-        })
         continue
       }
 
       const checkboxMatch = /^\s*[-*]\s+\[( |x)\]\s+(.+)$/.exec(line)
-      if (checkboxMatch) {
-        const checked = checkboxMatch[1].toLowerCase() === 'x'
-        const text = checkboxMatch[2].trim()
-        items.push({
-          id: `line-${index + 1}`,
-          kind: 'task',
-          lineNumber: index + 1,
-          level: 0,
-          text,
-          phase: currentPhase,
-          raw: line,
-          checked,
-          active: text === activeTaskText,
-        })
+      if (!checkboxMatch) {
         continue
       }
 
-      if (line.trim() !== '') {
-        items.push({
-          id: `line-${index + 1}`,
-          kind: 'line',
-          lineNumber: index + 1,
-          level: 0,
-          text: line.trim(),
-          phase: currentPhase,
-          raw: line,
-          checked: false,
-          active: false,
-        })
-      }
+      const checked = checkboxMatch[1].toLowerCase() === 'x'
+      const text = checkboxMatch[2].trim()
+      items.push({
+        id: `line-${index + 1}`,
+        kind: 'task',
+        lineNumber: index + 1,
+        level: 0,
+        text,
+        phase: currentPhase,
+        raw: line,
+        checked,
+        active: text === activeTaskText,
+      })
     }
 
     return items
@@ -532,6 +509,19 @@ export function renderHtml() {
     let selectedEventId = ''
     let selectedTodoId = ''
     let eventSource = null
+    const renderCache = {
+      runsKey: '',
+      todosKey: '',
+      focusKey: '',
+      editsKey: '',
+      flowKey: '',
+      graphKey: '',
+      runStateKey: '',
+      summaryKey: '',
+      outputKey: '',
+      feedKey: '',
+      timelineKey: '',
+    }
 
     function normalizeFeedEntry(entry) {
       return {
@@ -613,17 +603,21 @@ export function renderHtml() {
       if (selected && !selectedTodoId) {
         selectedTodoId = selected.id
       }
+      const nextKey = JSON.stringify([todos, selected?.id || ''])
+      if (renderCache.todosKey === nextKey) {
+        return
+      }
+      renderCache.todosKey = nextKey
       const list = document.getElementById('todo-list')
       list.innerHTML = todos.length > 0
         ? todos.map((item) => {
             const active = selected && item.id === selected.id
-            const textClass = item.kind === 'heading' ? 'todo-heading' : (item.kind === 'task' ? 'todo-task' : '')
-            const checkedMark = item.kind === 'task' ? (item.checked ? '✓' : '○') : (item.kind === 'heading' ? '#' : '·')
+            const checkedMark = item.checked ? '✓' : '○'
             const checkedClass = item.checked ? 'todo-checked' : ''
             return '<details class="todo-item ' + (active ? 'active' : '') + '" ' + (active ? 'open' : '') + ' data-todo-id="' + esc(item.id) + '">' +
               '<summary class="todo-summary">' +
                 '<div class="todo-line">' + esc(String(item.lineNumber)) + '</div>' +
-                '<div class="' + textClass + ' ' + checkedClass + '">' + esc(checkedMark + ' ' + item.text) + '</div>' +
+                '<div class="todo-task ' + checkedClass + '">' + esc(checkedMark + ' ' + item.text) + '</div>' +
               '</summary>' +
               '<div class="todo-open-body">' + esc(item.phase || '') + '</div>' +
             '</details>'
@@ -634,6 +628,8 @@ export function renderHtml() {
         element.addEventListener('toggle', () => {
           if (element.open) {
             selectedTodoId = element.getAttribute('data-todo-id') || ''
+            renderCache.todosKey = ''
+            renderCache.focusKey = ''
             renderSnapshot(snapshot)
           }
         })
@@ -642,19 +638,36 @@ export function renderHtml() {
 
     function renderFocusedTodo(snapshot) {
       const todo = findSelectedTodo(snapshot)
+      const nextKey = JSON.stringify({
+        todoId: todo?.id || '',
+        activeLabel: snapshot?.flow?.activeLabel || '',
+        iteration: snapshot?.flow?.iteration || '',
+        phase: todo?.phase || snapshot?.summary?.phase || '',
+        checked: todo?.checked === true,
+        active: todo?.active === true,
+      })
+      if (renderCache.focusKey === nextKey) {
+        return
+      }
+      renderCache.focusKey = nextKey
       document.getElementById('todo-focus-title').textContent = todo ? todo.text : 'No todo selected.'
       const stateBar = document.getElementById('todo-state-bar')
       const chips = [
         ['Current activity', snapshot?.flow?.activeLabel || 'Idle'],
         ['Iteration', snapshot?.flow?.iteration || '—'],
         ['Phase', todo?.phase || snapshot?.summary?.phase || '—'],
-        ['Task status', todo?.kind === 'task' ? (todo.checked ? 'Done' : (todo.active ? 'Active' : 'Pending')) : 'Info'],
+        ['Task status', todo ? (todo.checked ? 'Done' : (todo.active ? 'Active' : 'Pending')) : 'Info'],
       ]
       stateBar.innerHTML = chips.map(([label, value]) => '<div class="state-chip">' + esc(label + ': ' + value) + '</div>').join('')
     }
 
     function renderCurrentEdits(snapshot) {
       const edits = Array.isArray(snapshot?.currentEdits) ? snapshot.currentEdits : []
+      const nextKey = JSON.stringify(edits)
+      if (renderCache.editsKey === nextKey) {
+        return
+      }
+      renderCache.editsKey = nextKey
       const target = document.getElementById('edit-list')
       target.innerHTML = edits.length > 0
         ? edits.map((entry) => '<details class="edit-item" open><summary class="edit-head">' + esc(entry.file) + '</summary><pre>' + esc(entry.diff || 'No diff available.') + '</pre></details>').join('')
@@ -692,11 +705,15 @@ export function renderHtml() {
 
       const select = document.getElementById('run-select')
       const selected = data.config.selectedRunId || ''
-      select.innerHTML = data.runs.map((run) => {
-        const suffix = [run.status, run.phase].filter(Boolean).join(' · ')
-        return '<option value="' + esc(run.runId) + '" ' + (selected === run.runId ? 'selected' : '') + '>' +
-          esc(run.runId.slice(0, 8) + (suffix ? ' — ' + suffix : '')) + '</option>'
-      }).join('')
+      const runsKey = JSON.stringify([selected, data.runs])
+      if (renderCache.runsKey !== runsKey) {
+        renderCache.runsKey = runsKey
+        select.innerHTML = data.runs.map((run) => {
+          const suffix = [run.status, run.phase].filter(Boolean).join(' · ')
+          return '<option value="' + esc(run.runId) + '" ' + (selected === run.runId ? 'selected' : '') + '>' +
+            esc(run.runId.slice(0, 8) + (suffix ? ' — ' + suffix : '')) + '</option>'
+        }).join('')
+      }
       if (!select.dataset.bound) {
         select.addEventListener('change', (event) => {
           updateRunQuery(event.target.value)
@@ -710,28 +727,36 @@ export function renderHtml() {
       renderCurrentEdits(data)
 
       const flowEl = document.getElementById('flow')
-      flowEl.innerHTML = data.flow.steps.map((step) => {
-        const latest = step.latestEvent
-        const meta = latest ? [latest.kind, latest.status, latest.terminalReason].filter(Boolean).join('\\n') : 'waiting'
-        return '<div class="step ' + esc(step.status) + '">' +
-          '<div class="step-name">' + esc(step.label) + '</div>' +
-          '<div class="step-status">' + esc(step.status) + '</div>' +
-          '<div class="step-meta">' + esc(meta) + '</div>' +
-          '</div>'
-      }).join('')
+      const flowKey = JSON.stringify(data.flow.steps)
+      if (renderCache.flowKey !== flowKey) {
+        renderCache.flowKey = flowKey
+        flowEl.innerHTML = data.flow.steps.map((step) => {
+          const latest = step.latestEvent
+          const meta = latest ? [latest.kind, latest.status, latest.terminalReason].filter(Boolean).join('\\n') : 'waiting'
+          return '<div class="step ' + esc(step.status) + '">' +
+            '<div class="step-name">' + esc(step.label) + '</div>' +
+            '<div class="step-status">' + esc(step.status) + '</div>' +
+            '<div class="step-meta">' + esc(meta) + '</div>' +
+            '</div>'
+        }).join('')
+      }
 
       const graphEl = document.getElementById('graph')
-      graphEl.innerHTML = data.graph.nodes.length > 0
-        ? data.graph.nodes.map((node) => {
-            const retry = node.retryCount > 0 ? 'retry #' + node.retryCount : ''
-            const meta = [node.kind, retry, node.role, node.terminalReason].filter(Boolean).join('\\n')
-            return '<button type="button" class="graph-node ' + esc(node.status) + '" data-event-id="' + esc(node.id) + '">' +
-              '<div class="step-name">' + esc(node.label) + '</div>' +
-              '<div class="step-status">' + esc(node.status) + '</div>' +
-              '<div class="step-meta">' + esc(meta) + '\\n' + esc(node.notes || '') + '</div>' +
-              '</button>'
-          }).join('')
-        : '<div class="muted">No iteration graph yet.</div>'
+      const graphKey = JSON.stringify(data.graph.nodes)
+      if (renderCache.graphKey !== graphKey) {
+        renderCache.graphKey = graphKey
+        graphEl.innerHTML = data.graph.nodes.length > 0
+          ? data.graph.nodes.map((node) => {
+              const retry = node.retryCount > 0 ? 'retry #' + node.retryCount : ''
+              const meta = [node.kind, retry, node.role, node.terminalReason].filter(Boolean).join('\\n')
+              return '<button type="button" class="graph-node ' + esc(node.status) + '" data-event-id="' + esc(node.id) + '">' +
+                '<div class="step-name">' + esc(node.label) + '</div>' +
+                '<div class="step-status">' + esc(node.status) + '</div>' +
+                '<div class="step-meta">' + esc(meta) + '\\n' + esc(node.notes || '') + '</div>' +
+                '</button>'
+            }).join('')
+          : '<div class="muted">No iteration graph yet.</div>'
+      }
 
       const runState = [
         ['runId', data.activeRun?.runId || data.state?.runId || data.config.selectedRunId || '—'],
@@ -743,40 +768,64 @@ export function renderHtml() {
         ['lastStatus', data.activeRun?.lastStatus || data.state?.lastStatus || '—'],
         ['lastCompleted', data.activeRun?.lastCompletedIteration || '—'],
       ]
-      document.getElementById('run-state').innerHTML = runState.map(([k, v]) => '<div>' + esc(k) + '</div><div>' + esc(v) + '</div>').join('')
-      document.getElementById('summary').textContent = data.summary ? JSON.stringify(data.summary, null, 2) : 'No iteration summary yet.'
-      document.getElementById('output').textContent = data.lastOutput || 'No agent output yet.'
+      const runStateKey = JSON.stringify(runState)
+      if (renderCache.runStateKey !== runStateKey) {
+        renderCache.runStateKey = runStateKey
+        document.getElementById('run-state').innerHTML = runState.map(([k, v]) => '<div>' + esc(k) + '</div><div>' + esc(v) + '</div>').join('')
+      }
+      const summaryText = data.summary ? JSON.stringify(data.summary, null, 2) : 'No iteration summary yet.'
+      if (renderCache.summaryKey !== summaryText) {
+        renderCache.summaryKey = summaryText
+        document.getElementById('summary').textContent = summaryText
+      }
+      const outputText = data.lastOutput || 'No agent output yet.'
+      if (renderCache.outputKey !== outputText) {
+        renderCache.outputKey = outputText
+        document.getElementById('output').textContent = outputText
+      }
 
       renderPinnedTool(data)
       const visibleFeed = getVisibleFeedEntries(data)
+      const feedKey = JSON.stringify(visibleFeed)
       const feedEl = document.getElementById('feed')
-      feedEl.innerHTML = visibleFeed.length > 0
-        ? visibleFeed.map((entry) => {
-            const meta = [entry.role, entry.kind, entry.toolName].filter(Boolean).join(' · ')
-            return '<div class="feed-item">' +
-              '<div class="feed-head">' +
-                '<div class="feed-type ' + esc(entry.type) + '">' + esc(entry.type || 'event') + '</div>' +
-                (entry.count > 1 ? '<div class="feed-count">x' + esc(entry.count) + '</div>' : '') +
-              '</div>' +
-              '<div class="feed-meta">' + esc(new Date(entry.timestamp).toLocaleTimeString()) + (meta ? ' · ' + esc(meta) : '') + '</div>' +
-              '<div class="feed-text">' + esc(entry.text || '') + '</div>' +
-              '</div>'
-          }).join('')
-        : '<div class="muted">No live feed yet.</div>'
-      feedEl.scrollTop = feedEl.scrollHeight
+      if (renderCache.feedKey !== feedKey) {
+        renderCache.feedKey = feedKey
+        const distanceFromBottom = feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight
+        const stickToBottom = distanceFromBottom < 40
+        feedEl.innerHTML = visibleFeed.length > 0
+          ? visibleFeed.map((entry) => {
+              const meta = [entry.role, entry.kind, entry.toolName].filter(Boolean).join(' · ')
+              return '<div class="feed-item">' +
+                '<div class="feed-head">' +
+                  '<div class="feed-type ' + esc(entry.type) + '">' + esc(entry.type || 'event') + '</div>' +
+                  (entry.count > 1 ? '<div class="feed-count">x' + esc(entry.count) + '</div>' : '') +
+                '</div>' +
+                '<div class="feed-meta">' + esc(new Date(entry.timestamp).toLocaleTimeString()) + (meta ? ' · ' + esc(meta) : '') + '</div>' +
+                '<div class="feed-text">' + esc(entry.text || '') + '</div>' +
+                '</div>'
+            }).join('')
+          : '<div class="muted">No live feed yet.</div>'
+        if (stickToBottom) {
+          feedEl.scrollTop = feedEl.scrollHeight
+        }
+      }
 
       const timelineEvents = [...data.recentTelemetry].reverse()
-      const timeline = timelineEvents.map((event) => {
-        const status = eventStatus(event.status)
-        return '<tr data-event-id="' + esc(event._vizId) + '" style="cursor:pointer;">' +
-          '<td>' + esc(new Date(event.timestamp).toLocaleTimeString()) + '</td>' +
-          '<td>' + esc(event.iteration) + '</td>' +
-          '<td>' + esc(event.kind) + '</td>' +
-          '<td><span class="' + pillClass(status) + '">' + esc(event.status) + '</span></td>' +
-          '<td class="muted">' + esc(event.notes || '') + '</td>' +
-          '</tr>'
-      }).join('')
-      document.getElementById('timeline').innerHTML = timeline || '<tr><td colspan="5" class="muted">No telemetry yet.</td></tr>'
+      const timelineKey = JSON.stringify(timelineEvents)
+      if (renderCache.timelineKey !== timelineKey) {
+        renderCache.timelineKey = timelineKey
+        const timeline = timelineEvents.map((event) => {
+          const status = eventStatus(event.status)
+          return '<tr data-event-id="' + esc(event._vizId) + '" style="cursor:pointer;">' +
+            '<td>' + esc(new Date(event.timestamp).toLocaleTimeString()) + '</td>' +
+            '<td>' + esc(event.iteration) + '</td>' +
+            '<td>' + esc(event.kind) + '</td>' +
+            '<td><span class="' + pillClass(status) + '">' + esc(event.status) + '</span></td>' +
+            '<td class="muted">' + esc(event.notes || '') + '</td>' +
+            '</tr>'
+        }).join('')
+        document.getElementById('timeline').innerHTML = timeline || '<tr><td colspan="5" class="muted">No telemetry yet.</td></tr>'
+      }
 
       bindSelectableEvents()
       renderSelectedEvent()

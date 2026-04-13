@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+
+const liveFeedWriteQueues = new Map()
 import {
   appendLog,
   writeTextFile,
@@ -43,8 +45,18 @@ async function appendLiveFeedEvent(config, event) {
   if (!config.runLiveFeedFile) {
     return
   }
-  await fs.mkdir(path.dirname(config.runLiveFeedFile), { recursive: true })
-  await fs.appendFile(config.runLiveFeedFile, `${JSON.stringify(event)}\n`, 'utf8')
+
+  const filePath = config.runLiveFeedFile
+  const previous = liveFeedWriteQueues.get(filePath) ?? Promise.resolve()
+  const next = previous
+    .catch(() => {})
+    .then(async () => {
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, 'utf8')
+    })
+
+  liveFeedWriteQueues.set(filePath, next)
+  await next
 }
 
 async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
