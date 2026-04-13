@@ -19,13 +19,17 @@
     "@mariozechner/pi-coding-agent": "^0.66.1"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/pi-clear-history.mjs && node --check src/pi-client.mjs && node --check src/pi-config.mjs && node --check src/pi-flow.mjs && node --check src/pi-heartbeat.mjs && node --check src/pi-history.mjs && node --check src/pi-preflight.mjs && node --check src/pi-prompts.mjs && node --check src/pi-repo.mjs && node --check src/pi-report.mjs && node --check src/pi-sdk-turn.mjs && node --check src/pi-supervisor.mjs && node --check src/pi-telemetry.mjs && node --check src/pi-visual-once.mjs && node --check src/pi-visual-review.mjs && node --check src/pi-visualizer.mjs && node --check src/pi-visualizer-server.mjs && node --check src/pi-visualizer-shared.mjs && node --check src/index.mjs && node --check test/pi-heartbeat.test.mjs && node --check test/pi-lifecycle.test.mjs && node --check test/pi-role-models.test.mjs && node --check test/pi-flow.test.mjs && node --check test/pi-history.test.mjs && node --check test/pi-prompts.test.mjs && node --check test/pi-preflight.test.mjs && node --check test/pi-repo.test.mjs && node --check test/pi-sdk-supervisor.test.mjs && node --check test/pi-sdk-turn.test.mjs && node --check test/pi-telemetry.test.mjs && node --check test/pi-visualizer-shared.test.mjs && node --check test/fixtures/fake-pi.mjs && node --check test/fixtures/fake-pi-sdk.mjs",
-    "test": "node --test test/pi-heartbeat.test.mjs test/pi-lifecycle.test.mjs test/pi-role-models.test.mjs test/pi-flow.test.mjs test/pi-history.test.mjs test/pi-prompts.test.mjs test/pi-preflight.test.mjs test/pi-repo.test.mjs test/pi-sdk-supervisor.test.mjs test/pi-sdk-turn.test.mjs test/pi-telemetry.test.mjs test/pi-visualizer-shared.test.mjs"
+    "check": "node --check src/cli.mjs && node --check src/pi-clear-history.mjs && node --check src/pi-client.mjs && node --check src/pi-config.mjs && node --check src/pi-debug-live.mjs && node --check src/pi-flow.mjs && node --check src/pi-heartbeat.mjs && node --check src/pi-history.mjs && node --check src/pi-preflight.mjs && node --check src/pi-prompts.mjs && node --check src/pi-repo.mjs && node --check src/pi-report.mjs && node --check src/pi-sdk-turn.mjs && node --check src/pi-supervisor.mjs && node --check src/pi-telemetry.mjs && node --check src/pi-visual-once.mjs && node --check src/pi-visual-review.mjs && node --check src/pi-visualizer.mjs && node --check src/pi-visualizer-server.mjs && node --check src/pi-visualizer-shared.mjs && node --check src/index.mjs && node --check test/pi-heartbeat.test.mjs && node --check test/pi-lifecycle.test.mjs && node --check test/pi-role-models.test.mjs && node --check test/pi-flow.test.mjs && node --check test/pi-history.test.mjs && node --check test/pi-prompts.test.mjs && node --check test/pi-preflight.test.mjs && node --check test/pi-repo.test.mjs && node --check test/pi-sdk-supervisor.test.mjs && node --check test/pi-sdk-turn.test.mjs && node --check test/pi-telemetry.test.mjs && node --check test/pi-visualizer-shared.test.mjs && node --check test/fixtures/fake-pi.mjs && node --check test/fixtures/fake-pi-sdk.mjs && node --check test/fixtures/fake-live-pi-sdk.mjs",
+    "test": "node --test test/pi-heartbeat.test.mjs test/pi-lifecycle.test.mjs test/pi-role-models.test.mjs test/pi-flow.test.mjs test/pi-history.test.mjs test/pi-prompts.test.mjs test/pi-preflight.test.mjs test/pi-repo.test.mjs test/pi-sdk-supervisor.test.mjs test/pi-sdk-turn.test.mjs test/pi-telemetry.test.mjs test/pi-visualizer-shared.test.mjs",
+    "debug:live-ui": "node src/cli.mjs debug-live --reset",
+    "dev:visualizer:ui": "npm --prefix visualizer-ui run dev",
+    "build:visualizer:ui": "npm --prefix visualizer-ui run build"
   },
   "files": [
     "src",
     "templates",
     "docs",
+    "visualizer-ui",
     "pi.config.json",
     "SETUP.md",
     "README.md"

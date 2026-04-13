@@ -89,6 +89,7 @@ pi-harness report
 pi-harness clear-history
 pi-harness visual-once
 pi-harness visualize
+pi-harness debug-live
 pi-harness visual-review-worker
 ```
 
@@ -318,5 +319,27 @@ In this package repo:
 npm run check
 npm test
 ```
+
+For local visualizer iteration against fake live SDK agent:
+
+```bash
+npm run debug:live-ui
+```
+
+For React/Vite visualizer UI dev loop:
+
+```bash
+npm run dev:visualizer:ui
+```
+
+For production visualizer UI build:
+
+```bash
+npm run build:visualizer:ui
+```
+
+This seeds `.pi-debug/live-ui/`, runs harness there with streaming fake SDK fixture, hosts visualizer, and gives stable local repro loop for UI work. React app lives in `visualizer-ui/`. Visualizer server now serves built assets from `visualizer-ui/dist/` and falls back to build-instructions page if build artifacts are missing.
+
+See `docs/VISUALIZER_UI_PLAN.md` for migration plan.
 
 The package requires Node `>=20`.

@@ -19,6 +19,7 @@ const COMMANDS = new Map([
   ['clear-history', 'pi-clear-history.mjs'],
   ['visual-once', 'pi-visual-once.mjs'],
   ['visualize', 'pi-visualizer.mjs'],
+  ['debug-live', 'pi-debug-live.mjs'],
   ['visual-review-worker', 'pi-visual-review.mjs'],
 ])
 

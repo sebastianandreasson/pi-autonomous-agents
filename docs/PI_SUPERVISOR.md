@@ -35,8 +35,10 @@ Main package files:
 - `src/pi-prompts.mjs`: default prompt builders
 - `src/pi-visual-review.mjs`: multimodal visual-review worker
 - `src/pi-visual-once.mjs`: one-shot manual visual review runner
-- `src/pi-visualizer.mjs`: local web UI for orchestration flow and active stage
+- `src/pi-visualizer.mjs`: local web UI entrypoint
+- `src/pi-visualizer-server.mjs`: shared visualizer server/runtime
 - `src/pi-visualizer-shared.mjs`: flow-state helpers for visualizer
+- `src/pi-debug-live.mjs`: local fake-live sandbox runner for visualizer debugging
 - `src/pi-report.mjs`: telemetry summary report
 - `templates/DEVELOPER.md`: default developer-role instructions template
 - `templates/TESTER.md`: default tester-role instructions template
@@ -49,6 +51,7 @@ pi-harness run
 pi-harness report
 pi-harness visual-once
 pi-harness visualize
+pi-harness debug-live
 ```
 
 The package reads `PI_CONFIG_FILE` if provided. Otherwise it falls back to the bundled generic `pi.config.json`.
@@ -58,6 +61,8 @@ The package reads `PI_CONFIG_FILE` if provided. Otherwise it falls back to the b
 `pi-harness visualize` remains available as standalone viewer.
 
 Visualizer reads active-run lock, TODO file, per-run state, per-run iteration summary, per-run last output snapshot, live feed JSONL, and telemetry to show current stage plus historical runs.
+
+For local UI iteration in this package repo, use `pi-harness debug-live` to run against seeded fake live SDK sandbox.
 
 ## Config Contract
 

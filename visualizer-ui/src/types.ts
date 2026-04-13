@@ -1,0 +1,116 @@
+export type RunSummary = {
+  runId: string
+  active?: boolean
+  mtimeMs?: number
+  status?: string
+  iteration?: number
+  phase?: string
+  task?: string
+  runStartedAt?: string
+  lastRunAt?: string
+}
+
+export type ActiveRun = {
+  runId?: string
+  status?: string
+  phase?: string
+  task?: string
+  activeKind?: string
+  activeRole?: string
+  activeReason?: string
+  lastStatus?: string
+  lastCompletedIteration?: number
+}
+
+export type TodoItem = {
+  id: string
+  kind: 'task'
+  lineNumber: number
+  level: number
+  text: string
+  phase?: string
+  raw?: string
+  checked: boolean
+  active?: boolean
+}
+
+export type FlowStep = {
+  key: string
+  label: string
+  status: 'pending' | 'active' | 'done' | 'error' | 'skipped' | string
+  latestEvent?: {
+    kind?: string
+    status?: string
+    terminalReason?: string
+  }
+}
+
+export type FlowSnapshot = {
+  activeLabel?: string
+  iteration?: number
+  steps: FlowStep[]
+}
+
+export type GraphNode = {
+  id: string
+  label: string
+  status: 'pending' | 'active' | 'done' | 'error' | 'skipped' | string
+  kind?: string
+  retryCount?: number
+  role?: string
+  terminalReason?: string
+  notes?: string
+  event?: unknown
+}
+
+export type GraphSnapshot = {
+  nodes: GraphNode[]
+}
+
+export type CurrentEdit = {
+  file: string
+  diff: string
+}
+
+export type LiveFeedEntry = {
+  seq?: number
+  timestamp?: string
+  type?: string
+  text?: string
+  role?: string
+  kind?: string
+  toolName?: string
+}
+
+export type TelemetryEvent = {
+  _vizId: string
+  timestamp?: string
+  iteration?: number
+  kind?: string
+  status?: string
+  notes?: string
+}
+
+export type VisualizerSnapshot = {
+  now: string
+  config: {
+    cwd: string
+    transport?: string
+    telemetryJsonl?: string
+    activeRunFile?: string
+    stateFile?: string
+    lastIterationSummaryFile?: string
+    selectedRunId?: string
+  }
+  runs: RunSummary[]
+  activeRun: ActiveRun | null
+  state: Record<string, unknown> | null
+  summary: Record<string, unknown> | null
+  flow: FlowSnapshot
+  graph: GraphSnapshot
+  todos: TodoItem[]
+  currentEdits: CurrentEdit[]
+  lastOutput: string
+  liveFeed: LiveFeedEntry[]
+  recentTelemetry: TelemetryEvent[]
+}

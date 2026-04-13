@@ -98,11 +98,19 @@ export async function appendTelemetry(config, event) {
 export async function readTelemetry(config) {
   try {
     const raw = await fs.readFile(config.telemetryJsonl, 'utf8')
-    return raw
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
+    const events = []
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed === '') {
+        continue
+      }
+      try {
+        events.push(JSON.parse(trimmed))
+      } catch {
+        // Ignore partial/truncated trailing JSONL records while file is actively being appended.
+      }
+    }
+    return events
   } catch {
     return []
   }

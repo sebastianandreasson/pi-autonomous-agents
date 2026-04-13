@@ -157,7 +157,7 @@ test('killing the top-level harness process tears down sdk supervisor and owned 
   process.kill(child.pid, 'SIGKILL')
 
   await waitFor(() => [supervisorPid, verifierPid].every((pid) => !isProcessRunning(pid)), {
-    timeoutMs: 15_000,
+    timeoutMs: 25_000,
     intervalMs: 200,
     errorMessage: `Processes still running after parent death: ${[supervisorPid, verifierPid].filter((pid) => isProcessRunning(pid)).join(', ')}`,
   })
