@@ -4,6 +4,11 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import {
+  registerOwnedChildProcess,
+  signalChildProcess,
+  watchParentProcess,
+} from './pi-repo.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 
@@ -36,10 +41,53 @@ function main() {
     env: process.env,
     stdio: 'inherit',
   })
+  registerOwnedChildProcess(child)
+
+  let shuttingDown = false
+  let forceKillTimer = null
+  const stopWatchingParent = watchParentProcess(() => {
+    shutdown({
+      signal: 'SIGTERM',
+      exitCode: 1,
+    })
+  })
+
+  function shutdown({
+    signal,
+    exitCode,
+  }) {
+    if (shuttingDown) {
+      return
+    }
+
+    shuttingDown = true
+    stopWatchingParent()
+    signalChildProcess(child.pid, signal)
+    forceKillTimer = setTimeout(() => {
+      signalChildProcess(child.pid, 'SIGKILL')
+    }, 1000)
+    if (typeof forceKillTimer.unref === 'function') {
+      forceKillTimer.unref()
+    }
+    process.exitCode = exitCode
+  }
+
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => {
+      shutdown({
+        signal,
+        exitCode: 128,
+      })
+    })
+  }
 
   child.on('exit', (code, signal) => {
+    stopWatchingParent()
+    if (forceKillTimer) {
+      clearTimeout(forceKillTimer)
+    }
     if (signal) {
-      process.kill(process.pid, signal)
+      process.exitCode = 128
       return
     }
     process.exitCode = code ?? 1

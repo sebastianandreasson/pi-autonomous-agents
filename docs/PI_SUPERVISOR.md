@@ -222,6 +222,7 @@ The built-in adapter mitigates obvious local loops by watching PI RPC tool event
 - a soft `continue` can be sent after inactivity
 - a separate tool-aware watchdog can tolerate long-running `bash` or browser work without treating the turn as dead
 - a hard no-event timeout aborts a wedged turn instead of hanging indefinitely
+- parent-loss shutdown tears down the owned supervisor/adapter/PI child tree instead of allowing orphaned background runs
 
 Important: terminal streaming does not reset the heartbeat by itself. The watchdog keys off PI RPC events and active tool state, not raw shell output.
 

@@ -10,7 +10,12 @@ import {
   getHeartbeatDecision,
   resolveHeartbeatConfig,
 } from './pi-heartbeat.mjs'
-import { signalProcessTree } from './pi-repo.mjs'
+import {
+  registerOwnedChildProcess,
+  signalOwnedChildProcesses,
+  signalProcessTree,
+  watchParentProcess,
+} from './pi-repo.mjs'
 
 function createJsonlReader(stream, onLine) {
   const rl = createInterface({ input: stream })
@@ -155,6 +160,9 @@ async function run() {
     detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
   })
+  registerOwnedChildProcess(child, {
+    useProcessGroup: process.platform !== 'win32',
+  })
 
   let stderr = ''
   const events = []
@@ -197,6 +205,36 @@ async function run() {
   let continueAttempted = false
   let continueAccepted = false
   let continueRejected = false
+  let shutdownRequested = false
+  let shutdownReason = ''
+  let shutdownEscalationTimer = null
+
+  const requestShutdown = (reason, signal = 'SIGTERM') => {
+    if (shutdownRequested) {
+      return
+    }
+
+    shutdownRequested = true
+    shutdownReason = String(reason ?? 'adapter_shutdown')
+    closeAssistantLine()
+    signalOwnedChildProcesses(signal)
+    shutdownEscalationTimer = setTimeout(() => {
+      signalOwnedChildProcesses('SIGKILL')
+    }, 1000)
+    if (typeof shutdownEscalationTimer.unref === 'function') {
+      shutdownEscalationTimer.unref()
+    }
+  }
+
+  const stopWatchingParent = watchParentProcess(() => {
+    requestShutdown('parent_exit', 'SIGTERM')
+  })
+
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => {
+      requestShutdown(signal, signal)
+    })
+  }
 
   const writeLive = (text) => {
     if (!streamTerminal) {
@@ -460,6 +498,26 @@ async function run() {
 
     await waitForAgentEnd()
 
+    if (shutdownRequested) {
+      console.log(JSON.stringify({
+        sessionId: request.sessionId ?? '',
+        sessionFile: request.sessionFile ?? '',
+        status: 'failed',
+        output: '',
+        notes: shutdownReason,
+        role: '',
+        model: requestedModel,
+        toolCalls: 0,
+        toolErrors: 0,
+        messageUpdates: 0,
+        stopReason: '',
+        loopDetected: false,
+        loopSignature: '',
+        terminalReason: 'adapter_shutdown',
+      }))
+      return
+    }
+
     if (heartbeatTimedOut) {
       const toolCalls = events.filter((event) => event.type === 'tool_execution_start').length
       const toolErrors = events.filter((event) => event.type === 'tool_execution_end' && event.isError).length
@@ -571,8 +629,12 @@ async function run() {
       terminalReason,
     }))
   } finally {
+    stopWatchingParent()
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval)
+    }
+    if (shutdownEscalationTimer) {
+      clearTimeout(shutdownEscalationTimer)
     }
     stopReading()
     for (const current of pending.values()) {

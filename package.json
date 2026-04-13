@@ -1,7 +1,7 @@
 {
   "name": "@sebastianandreasson/pi-autonomous-agents",
   "private": false,
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "description": "Portable unattended PI harness for developer/tester/visual-review loops.",
   "license": "MIT",
@@ -16,8 +16,8 @@
     "pi-harness": "./src/cli.mjs"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/pi-clear-history.mjs && node --check src/pi-client.mjs && node --check src/pi-config.mjs && node --check src/pi-flow.mjs && node --check src/pi-heartbeat.mjs && node --check src/pi-history.mjs && node --check src/pi-preflight.mjs && node --check src/pi-prompts.mjs && node --check src/pi-repo.mjs && node --check src/pi-report.mjs && node --check src/pi-rpc-adapter.mjs && node --check src/pi-supervisor.mjs && node --check src/pi-telemetry.mjs && node --check src/pi-visual-once.mjs && node --check src/pi-visual-review.mjs && node --check src/index.mjs && node --check test/pi-heartbeat.test.mjs && node --check test/pi-role-models.test.mjs && node --check test/pi-flow.test.mjs && node --check test/pi-history.test.mjs && node --check test/pi-prompts.test.mjs && node --check test/pi-preflight.test.mjs && node --check test/pi-repo.test.mjs && node --check test/pi-telemetry.test.mjs",
-    "test": "node --test test/pi-heartbeat.test.mjs test/pi-role-models.test.mjs test/pi-flow.test.mjs test/pi-history.test.mjs test/pi-prompts.test.mjs test/pi-preflight.test.mjs test/pi-repo.test.mjs test/pi-telemetry.test.mjs"
+    "check": "node --check src/cli.mjs && node --check src/pi-clear-history.mjs && node --check src/pi-client.mjs && node --check src/pi-config.mjs && node --check src/pi-flow.mjs && node --check src/pi-heartbeat.mjs && node --check src/pi-history.mjs && node --check src/pi-preflight.mjs && node --check src/pi-prompts.mjs && node --check src/pi-repo.mjs && node --check src/pi-report.mjs && node --check src/pi-rpc-adapter.mjs && node --check src/pi-supervisor.mjs && node --check src/pi-telemetry.mjs && node --check src/pi-visual-once.mjs && node --check src/pi-visual-review.mjs && node --check src/index.mjs && node --check test/pi-heartbeat.test.mjs && node --check test/pi-lifecycle.test.mjs && node --check test/pi-role-models.test.mjs && node --check test/pi-flow.test.mjs && node --check test/pi-history.test.mjs && node --check test/pi-prompts.test.mjs && node --check test/pi-preflight.test.mjs && node --check test/pi-repo.test.mjs && node --check test/pi-telemetry.test.mjs && node --check test/fixtures/fake-pi.mjs",
+    "test": "node --test test/pi-heartbeat.test.mjs test/pi-lifecycle.test.mjs test/pi-role-models.test.mjs test/pi-flow.test.mjs test/pi-history.test.mjs test/pi-prompts.test.mjs test/pi-preflight.test.mjs test/pi-repo.test.mjs test/pi-telemetry.test.mjs"
   },
   "files": [
     "src",

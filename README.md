@@ -232,6 +232,7 @@ Recent versions of the package isolate each run more aggressively:
 - in-progress iteration state persisted before agent work starts
 - stale run locks recovered when the owning PID is gone
 - timeout cleanup kills the full spawned process group, not only the direct child
+- parent-death watchers shut down orphaned supervisor and adapter layers instead of letting them continue under `PPID 1`
 
 That is meant to prevent orphaned timed-out agents or concurrent supervisors from corrupting shared state.
 

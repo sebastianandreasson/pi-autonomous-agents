@@ -114,6 +114,57 @@ export function isProcessRunning(pid) {
   }
 }
 
+const ownedChildren = new Map()
+
+export function registerOwnedChildProcess(child, options = {}) {
+  const pid = normalizePid(child?.pid)
+  if (pid <= 0) {
+    return () => {}
+  }
+
+  const entry = {
+    useProcessGroup: options.useProcessGroup === true && process.platform !== 'win32',
+  }
+  ownedChildren.set(pid, entry)
+
+  const unregister = () => {
+    ownedChildren.delete(pid)
+  }
+
+  if (typeof child?.once === 'function') {
+    child.once('exit', unregister)
+    child.once('close', unregister)
+  }
+
+  return unregister
+}
+
+export function signalChildProcess(pid, signal, options = {}) {
+  const normalizedPid = normalizePid(pid)
+  if (normalizedPid <= 0) {
+    return false
+  }
+
+  try {
+    if (options.useProcessGroup === true && process.platform !== 'win32') {
+      process.kill(-normalizedPid, signal)
+    } else {
+      process.kill(normalizedPid, signal)
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function signalOwnedChildProcesses(signal) {
+  let handled = false
+  for (const [pid, entry] of [...ownedChildren.entries()]) {
+    handled = signalChildProcess(pid, signal, entry) || handled
+  }
+  return handled
+}
+
 export async function readJsonFile(filePath, fallback = null) {
   try {
     const raw = await fs.readFile(filePath, 'utf8')
@@ -211,20 +262,45 @@ export async function releaseRunLock(lockFile, runId) {
 }
 
 export function signalProcessTree(pid, signal) {
-  const normalizedPid = normalizePid(pid)
-  if (normalizedPid <= 0) {
-    return false
+  return signalChildProcess(pid, signal, { useProcessGroup: true })
+}
+
+export function watchParentProcess(onParentExit, options = {}) {
+  const expectedParentPid = normalizePid(options.parentPid ?? process.ppid)
+  if (expectedParentPid <= 0 || typeof onParentExit !== 'function') {
+    return () => {}
   }
 
-  try {
-    if (process.platform !== 'win32') {
-      process.kill(-normalizedPid, signal)
-    } else {
-      process.kill(normalizedPid, signal)
+  let active = true
+  const intervalMs = Number.isFinite(Number(options.intervalMs))
+    ? Math.max(100, Number(options.intervalMs))
+    : 1000
+
+  const interval = setInterval(() => {
+    if (!active) {
+      return
     }
-    return true
-  } catch {
-    return false
+
+    const currentParentPid = normalizePid(process.ppid)
+    if (currentParentPid === expectedParentPid && currentParentPid > 1) {
+      return
+    }
+
+    active = false
+    clearInterval(interval)
+    onParentExit({
+      expectedParentPid,
+      currentParentPid,
+    })
+  }, intervalMs)
+
+  if (typeof interval.unref === 'function') {
+    interval.unref()
+  }
+
+  return () => {
+    active = false
+    clearInterval(interval)
   }
 }
 
@@ -474,6 +550,9 @@ export async function runShellCommand({
       detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+    const unregisterChild = registerOwnedChildProcess(child, {
+      useProcessGroup: process.platform !== 'win32',
+    })
 
     let stdout = ''
     let stderr = ''
@@ -506,6 +585,7 @@ export async function runShellCommand({
     })
 
     child.on('error', (error) => {
+      unregisterChild()
       if (killTimer) {
         clearTimeout(killTimer)
       }
@@ -524,6 +604,7 @@ export async function runShellCommand({
     })
 
     child.on('close', (code) => {
+      unregisterChild()
       if (killTimer) {
         clearTimeout(killTimer)
       }

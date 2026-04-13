@@ -30,11 +30,13 @@ import {
   releaseRunLock,
   runVerification,
   runShellCommand,
+  signalOwnedChildProcesses,
   stageFiles,
   unstageFiles,
   updateRunLock,
   runVisualCapture,
   timestamp,
+  watchParentProcess,
   writeChangedFiles,
   writeSessionId,
   writeState,
@@ -49,13 +51,30 @@ import {
 import { runStartupPreflight } from './pi-preflight.mjs'
 
 let stopRequested = false
+let shutdownEscalationTimer = null
 
-process.on('SIGINT', () => {
+function requestStop() {
   stopRequested = true
-})
+  signalOwnedChildProcesses('SIGTERM')
 
-process.on('SIGTERM', () => {
-  stopRequested = true
+  if (!shutdownEscalationTimer) {
+    shutdownEscalationTimer = setTimeout(() => {
+      signalOwnedChildProcesses('SIGKILL')
+    }, 1000)
+    if (typeof shutdownEscalationTimer.unref === 'function') {
+      shutdownEscalationTimer.unref()
+    }
+  }
+}
+
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    requestStop()
+  })
+}
+
+const stopWatchingParent = watchParentProcess(() => {
+  requestStop()
 })
 
 function sleep(seconds) {
@@ -1728,6 +1747,10 @@ async function main() {
       await appendLog(config.logFile, 'Stop requested by signal')
     }
   } finally {
+    stopWatchingParent()
+    if (shutdownEscalationTimer) {
+      clearTimeout(shutdownEscalationTimer)
+    }
     await updateRunOwnership(config, {
       status: stopRequested ? 'stopped' : 'finished',
       heartbeatAt: timestamp(),
