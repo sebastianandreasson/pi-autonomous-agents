@@ -49,6 +49,7 @@ import {
   shouldPersistLatestTesterFeedback,
 } from './pi-flow.mjs'
 import { runStartupPreflight } from './pi-preflight.mjs'
+import { startVisualizerServer } from './pi-visualizer-server.mjs'
 
 let stopRequested = false
 let shutdownEscalationTimer = null
@@ -1738,6 +1739,7 @@ async function main() {
   await ensureFileExists(config.taskFile, 'task file')
   await ensureFileExists(config.developerInstructionsFile, 'developer instructions file')
   await ensureFileExists(config.testerInstructionsFile, 'tester instructions file')
+  let visualizer = null
   const lockResult = await acquireRunLock(config.activeRunFile, {
     runId,
     pid: process.pid,
@@ -1756,6 +1758,16 @@ async function main() {
     process.env.PI_RUN_LOG_FILE = config.runLogFile
     await ensureTelemetryFiles(config)
     await appendLog(config.logFile, `Run started pid=${process.pid} mode=${config.mode}`)
+    if (config.mode === 'run' && process.env.PI_VISUALIZER !== '0' && process.env.PI_VISUALIZER !== 'false') {
+      try {
+        visualizer = await startVisualizerServer(config)
+        await appendLog(config.logFile, `Visualizer started at ${visualizer.url}`)
+        process.stderr.write(`[PI visualizer] ${visualizer.url}\n`)
+      } catch (error) {
+        await appendLog(config.logFile, `Visualizer failed to start: ${error instanceof Error ? error.message : String(error)}`)
+        process.stderr.write(`[PI visualizer] failed to start: ${error instanceof Error ? error.message : String(error)}\n`)
+      }
+    }
     if (lockResult.staleLock) {
       await appendLog(
         config.logFile,
@@ -1813,6 +1825,9 @@ async function main() {
       activeRole: '',
       activeReason: '',
     })
+    if (visualizer) {
+      await visualizer.close().catch(() => {})
+    }
     await releaseRunLock(config.activeRunFile, runId)
     delete process.env.PI_RUN_ID
     delete process.env.PI_RUN_LOG_FILE

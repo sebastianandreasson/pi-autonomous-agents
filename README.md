@@ -61,6 +61,7 @@ pi/
 Typical scripts:
 
 - `pi:once` / `pi:run` use default `sdk` transport
+- `pi:run` also hosts web UI on `127.0.0.1:4317` by default
 - `pi:mock` skips real agent execution
 
 
@@ -264,7 +265,11 @@ Useful files during a run:
 
 `pi-harness report` summarizes recent telemetry and surfaces things like terminal reasons and large-file warnings.
 
-`pi-harness visualize` starts lightweight local web UI for orchestration flow. By default it listens on `127.0.0.1:4317`. Override with `PI_VISUALIZER_HOST` and `PI_VISUALIZER_PORT`.
+`pi-harness run` now also starts lightweight local web UI for orchestration flow by default. By default it listens on `127.0.0.1:4317`. Override with `PI_VISUALIZER_HOST` and `PI_VISUALIZER_PORT`. Set `PI_VISUALIZER=0` to disable embedded web UI for a run.
+
+Visualizer uses SSE for live updates instead of browser polling.
+
+`pi-harness visualize` still exists as standalone viewer if you want to inspect run history without starting a new run.
 
 Visualizer now includes:
 - run history selector from `.pi-runtime/runs/`

@@ -83,6 +83,7 @@ Minimal example:
 5. Add package scripts.
 
 - `pi:once` and `pi:run` should use default `sdk` transport unless the repo has a very specific reason not to.
+- `pi:run` will also host local orchestration web UI by default.
 - `pi:mock` is for setup validation when real PI execution is not ready yet.
 
 Add these scripts to the consuming repo `package.json`, adapting only if necessary:

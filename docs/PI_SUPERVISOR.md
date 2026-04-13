@@ -53,9 +53,11 @@ pi-harness visualize
 
 The package reads `PI_CONFIG_FILE` if provided. Otherwise it falls back to the bundled generic `pi.config.json`.
 
-`pi-harness visualize` serves polling web UI over local HTTP. Defaults: `PI_VISUALIZER_HOST=127.0.0.1`, `PI_VISUALIZER_PORT=4317`.
+`pi-harness run` also starts SSE-backed web UI over local HTTP by default. Defaults: `PI_VISUALIZER_HOST=127.0.0.1`, `PI_VISUALIZER_PORT=4317`. Set `PI_VISUALIZER=0` to disable it for a run.
 
-It reads active-run lock, per-run state, per-run iteration summary, per-run last output snapshot, and telemetry to show current stage plus historical runs.
+`pi-harness visualize` remains available as standalone viewer.
+
+Visualizer reads active-run lock, per-run state, per-run iteration summary, per-run last output snapshot, and telemetry to show current stage plus historical runs.
 
 ## Config Contract
 
