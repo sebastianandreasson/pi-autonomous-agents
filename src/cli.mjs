@@ -36,11 +36,14 @@ function main() {
   if (subcommand === 'once' || subcommand === 'run') {
     childArgs.push(subcommand)
   }
+  const childStdio = subcommand === 'once' || subcommand === 'run'
+    ? ['pipe', 'inherit', 'inherit']
+    : 'inherit'
 
   const child = spawn(process.execPath, childArgs, {
     cwd: process.cwd(),
     env: process.env,
-    stdio: 'inherit',
+    stdio: childStdio,
   })
   registerOwnedChildProcess(child)
 

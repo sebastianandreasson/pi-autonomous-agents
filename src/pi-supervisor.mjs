@@ -81,6 +81,18 @@ const stopWatchingParent = watchParentProcess(() => {
   requestStop()
 })
 
+if (process.stdin && !process.stdin.isTTY) {
+  const requestStopFromClosedStdin = () => {
+    requestStop()
+  }
+  process.stdin.on('end', requestStopFromClosedStdin)
+  process.stdin.on('close', requestStopFromClosedStdin)
+  process.stdin.resume()
+  if (typeof process.stdin.unref === 'function') {
+    process.stdin.unref()
+  }
+}
+
 function sleep(seconds) {
   return new Promise((resolve) => {
     setTimeout(resolve, seconds * 1000)
