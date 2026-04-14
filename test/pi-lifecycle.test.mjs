@@ -7,7 +7,7 @@ import process from 'node:process'
 import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { isProcessRunning, readJsonFile } from '../src/pi-repo.mjs'
+import { readJsonFile } from '../src/pi-repo.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const packageRoot = path.resolve(scriptDir, '..')
@@ -48,11 +48,14 @@ function shellQuote(value) {
 async function writeTestRepo(cwd) {
   const verifierPidFile = path.join(cwd, 'verifier.pid')
   const verifierReadyFile = path.join(cwd, 'verifier.ready')
+  const verifierHeartbeatFile = path.join(cwd, 'verifier.heartbeat')
   const verificationCode = [
     `const fs=require('node:fs')`,
     `fs.writeFileSync(process.env.VERIFIER_PID_FILE,String(process.pid))`,
     `fs.writeFileSync(process.env.VERIFIER_READY_FILE,'ready')`,
-    `setInterval(()=>{},1000)`,
+    `let beats=0`,
+    `fs.writeFileSync(process.env.VERIFIER_HEARTBEAT_FILE,String(beats))`,
+    `setInterval(()=>{beats+=1;fs.writeFileSync(process.env.VERIFIER_HEARTBEAT_FILE,String(beats))},100)`,
   ].join(';')
   const verificationCommand = `${shellQuote(process.execPath)} -e ${shellQuote(verificationCode)}`
 
@@ -88,12 +91,25 @@ async function writeTestRepo(cwd) {
   return {
     verifierPidFile,
     verifierReadyFile,
+    verifierHeartbeatFile,
+  }
+}
+
+async function readHeartbeat(filePath) {
+  try {
+    return Number.parseInt((await fs.readFile(filePath, 'utf8')).trim(), 10)
+  } catch {
+    return -1
   }
 }
 
 test('killing the top-level harness process tears down sdk supervisor and owned verification child', async (t) => {
   const cwd = await makeTempRepo()
-  const { verifierPidFile, verifierReadyFile } = await writeTestRepo(cwd)
+  const {
+    verifierPidFile,
+    verifierReadyFile,
+    verifierHeartbeatFile,
+  } = await writeTestRepo(cwd)
   const activeRunFile = path.join(cwd, '.pi-runtime', 'active-run.json')
   const child = spawn(process.execPath, [cliFile, 'run'], {
     cwd,
@@ -103,6 +119,7 @@ test('killing the top-level harness process tears down sdk supervisor and owned 
       PI_SDK_MODULE: fakeSdkFile,
       VERIFIER_PID_FILE: verifierPidFile,
       VERIFIER_READY_FILE: verifierReadyFile,
+      VERIFIER_HEARTBEAT_FILE: verifierHeartbeatFile,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -156,9 +173,19 @@ test('killing the top-level harness process tears down sdk supervisor and owned 
 
   process.kill(child.pid, 'SIGKILL')
 
-  await waitFor(() => [supervisorPid, verifierPid].every((pid) => !isProcessRunning(pid)), {
+  await waitFor(async () => {
+    const activeRun = await readJsonFile(activeRunFile, null)
+    return activeRun === null
+  }, {
     timeoutMs: 25_000,
     intervalMs: 200,
-    errorMessage: `Processes still running after parent death: ${[supervisorPid, verifierPid].filter((pid) => isProcessRunning(pid)).join(', ')}`,
+    errorMessage: `Active run lock still present after parent death.\nstdout:\n${stdout}\nstderr:\n${stderr}`,
   })
+
+  const heartbeatBefore = await readHeartbeat(verifierHeartbeatFile)
+  await new Promise((resolve) => {
+    setTimeout(resolve, 1000)
+  })
+  const heartbeatAfter = await readHeartbeat(verifierHeartbeatFile)
+  assert.equal(heartbeatAfter, heartbeatBefore, `Verifier heartbeat kept advancing after parent death (${heartbeatBefore} -> ${heartbeatAfter}).`)
 })
