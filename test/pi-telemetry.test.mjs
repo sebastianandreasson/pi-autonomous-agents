@@ -32,6 +32,8 @@ test('ensureTelemetryFiles prepares summary artifacts and structured CSV header'
   assert.match(csv, /run_id/)
   assert.match(csv, /stop_reason/)
   assert.match(csv, /terminal_reason/)
+  assert.match(csv, /artifact_path/)
+  assert.match(csv, /output_excerpt/)
   assert.equal(await fs.readFile(config.lastIterationSummaryFile, 'utf8'), '')
 })
 
@@ -80,6 +82,8 @@ test('appendTelemetry writes structured telemetry columns', async () => {
     testerVerdict: 'PASS',
     commitPlanFound: true,
     terminalReason: 'tester_pass_with_commit_plan',
+    artifactPath: 'pi-output/failure-artifacts/1-tester.md',
+    outputExcerpt: 'TypeError: nope',
     notes: 'ok',
   })
 
@@ -88,6 +92,8 @@ test('appendTelemetry writes structured telemetry columns', async () => {
   assert.match(csv, /local\/tester/)
   assert.match(csv, /tester_pass_with_commit_plan/)
   assert.match(csv, /run-1/)
+  assert.match(csv, /failure-artifacts/)
+  assert.match(csv, /TypeError: nope/)
 
   const runCsv = await fs.readFile(config.runTelemetryCsv, 'utf8')
   assert.match(runCsv, /run-1/)

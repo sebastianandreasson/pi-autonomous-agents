@@ -190,10 +190,13 @@ Common fields in `pi.config.json`:
 - `testCommand`
 - `visualReviewEnabled`
 - `visualCaptureCommand`
+- `failureArtifactDir`
 - `continueAfterSeconds`
 - `toolContinueAfterSeconds`
 - `noEventTimeoutSeconds`
 - `toolNoEventTimeoutSeconds`
+- `sameFileLoopBudget`
+- `loopHistoryLimit`
 - `largeFileWarningLines`
 - `largeSpecWarningLines`
 
@@ -207,6 +210,8 @@ Key defaults:
 - `toolContinueAfterSeconds`: `900`
 - `noEventTimeoutSeconds`: `900`
 - `toolNoEventTimeoutSeconds`: `1800`
+- `sameFileLoopBudget`: `2`
+- `loopHistoryLimit`: `25`
 
 ## Prompt and Tooling Behavior
 
@@ -217,6 +222,7 @@ The package is optimized for local models by default:
 - prompts prefer `read` for source inspection
 - shell is intended for `git`, tests, and narrow diagnostics
 - SDK transport carries forward oversized shell-read warnings and loop/timeout guards
+- repeated same-file loop failures are remembered across iterations and escalate the next edit strategy
 - the supervisor emits large-file/spec warnings when touched files are getting risky
 
 This is deliberate. Large monolith files, huge e2e specs, and broad TODO items are one of the main causes of local-model drift and retry loops.
@@ -255,6 +261,8 @@ Useful files during a run:
   Latest verification output snapshot.
 - `.pi-last-iteration.json`
   Structured summary of the last completed iteration.
+- `pi-output/failure-artifacts/`
+  Compact failure artifacts with command, exit code, changed files, tester summary, and output excerpt.
 - `.pi-state.json`
   Persistent harness state, including in-progress iteration data.
 - `pi.log`
@@ -264,7 +272,7 @@ Useful files during a run:
 - `.pi-runtime/active-run.json`
 - `.pi-runtime/runs/<runId>/...`
 
-`pi-harness report` summarizes recent telemetry and surfaces things like terminal reasons and large-file warnings.
+`pi-harness report` summarizes recent telemetry and surfaces things like terminal reasons, large-file warnings, and recent failure artifacts.
 
 `pi-harness run` now also starts lightweight local web UI for orchestration flow by default. By default it listens on `127.0.0.1:4317`. Override with `PI_VISUALIZER_HOST` and `PI_VISUALIZER_PORT`. Set `PI_VISUALIZER=0` to disable embedded web UI for a run.
 

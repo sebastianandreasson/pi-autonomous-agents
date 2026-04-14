@@ -54,6 +54,16 @@ function formatLargeFileRiskHint(warnings) {
   return `\nLarge file risk in touched files:\n${lines}\nPrefer helper extraction, smaller scoped edits, or test splitting over broad in-place edits.\n`
 }
 
+function formatLoopRecoveryHint(hints) {
+  const list = Array.isArray(hints) ? hints.filter(Boolean) : []
+  if (list.length === 0) {
+    return ''
+  }
+
+  const lines = list.slice(0, 3).map((hint) => `- ${hint}`).join('\n')
+  return `\nRecent loop-recovery constraints:\n${lines}\n`
+}
+
 function displayPath(config, filePath) {
   const relativePath = path.relative(config.cwd, filePath)
   if (
@@ -190,11 +200,13 @@ export function buildMainPrompt(config, options = {}) {
     config.developerInstructionsFile,
     config.usingBundledDeveloperInstructions,
   )
+  const loopRecoveryHint = formatLoopRecoveryHint(options.loopRecoveryHints)
 
   if (!config.usingBundledDeveloperInstructions) {
     return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${loopRecoveryHint}
 
 Work only on the current phase.
 Select the first unchecked actionable checkbox in phase order.
@@ -220,6 +232,7 @@ Before stopping:
   return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
+${loopRecoveryHint}
 
 Do one current-phase unchecked task.
 
@@ -254,12 +267,14 @@ export function buildFixPrompt(config, recentVerificationOutput, options = {}) {
   )
   const findings = clampLines(recentVerificationOutput, configMaxLines(config, 'maxVerificationExcerptLines', 40))
   const largeFileRiskHint = formatLargeFileRiskHint(options.largeFileWarnings)
+  const loopRecoveryHint = formatLoopRecoveryHint(options.loopRecoveryHints)
 
   if (!config.usingBundledDeveloperInstructions) {
     return `Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 ${largeFileRiskHint}
+${loopRecoveryHint}
 
 The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
 
@@ -286,6 +301,7 @@ Before stopping:
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 ${largeFileRiskHint}
+${loopRecoveryHint}
 
 The tester step found a real problem in the current implementation. Fix only the product behavior related to the current phase and current task.
 
@@ -319,6 +335,7 @@ export function buildSteeringPrompt(config, reason, options = {}) {
     config.usingBundledDeveloperInstructions,
   )
   const largeFileRiskHint = formatLargeFileRiskHint(options.largeFileWarnings)
+  const loopRecoveryHint = formatLoopRecoveryHint(options.loopRecoveryHints)
 
   if (!config.usingBundledDeveloperInstructions) {
     return `Continue from the current repo state.
@@ -326,6 +343,7 @@ Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 ${largeFileRiskHint}
+${loopRecoveryHint}
 
 Reason for this follow-up: ${reason}
 
@@ -346,6 +364,7 @@ Read ${taskFile} and ${instructionsFile}.
 ${authorityLine}${visualFeedbackSection}
 ${testerFeedbackSection}
 ${largeFileRiskHint}
+${loopRecoveryHint}
 
 Reason for this follow-up: ${reason}
 

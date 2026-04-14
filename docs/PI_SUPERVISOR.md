@@ -80,10 +80,13 @@ Projects typically provide their own `pi.config.json` with fields such as:
 - `visualCaptureCommand`
 - `visualFeedbackFile`
 - `testerFeedbackFile`
+- `failureArtifactDir`
 - `models`
 - `piModel`
 - `visualReviewModel`
 - `commitMode`
+- `sameFileLoopBudget`
+- `loopHistoryLimit`
 
 Model entries may carry their own OpenAI-compatible endpoint settings, so the PI text loop and the multimodal visual reviewer can point at different backends without changing code.
 
@@ -123,6 +126,10 @@ The default flow keeps commit ownership with the active agent:
 1. `developer` should leave a clean, reviewable diff and should not commit.
 2. `tester` should review functionality and, on `PASS`, stage only the task-related files and create the commit directly.
 3. If the working tree is too messy to isolate safely, tester should return `VERDICT: BLOCKED` instead of guessing.
+
+If tester returns `PASS` but leaves a dirty tree without creating the commit, the harness now treats that as a protocol error and automatically falls back to a commit-plan follow-up instead of stalling the iteration.
+
+If tester edits files before finalization, the harness re-runs the configured smoke verification command immediately and records which files tester touched.
 
 If a repo explicitly needs the older harness-managed commit-plan flow, set `commitMode` to `plan`. In that mode, `testerCommit` and parsed commit plans are used as a compatibility path rather than the default.
 
@@ -175,6 +182,7 @@ SDK transport mitigates obvious local loops by watching agent and tool events:
 
 - repeated identical tool calls are aborted
 - repeated same-path churn is aborted
+- repeated same-file loop targets are persisted in harness state and escalate the next retry strategy
 - a soft `continue` can be sent after inactivity
 - a separate tool-aware watchdog can tolerate long-running `bash` or browser work without treating the turn as dead
 - a hard no-event timeout aborts a wedged turn instead of hanging indefinitely
@@ -200,4 +208,6 @@ Each step records:
 - changed file count
 - verification status
 - retry count
+- artifact path for compact failure diagnostics when available
+- output excerpt for failed verification-style events
 - notes

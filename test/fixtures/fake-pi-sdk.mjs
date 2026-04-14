@@ -4,6 +4,10 @@ import { execFileSync } from 'node:child_process'
 
 let nextSessionNumber = 0
 
+function getScenario() {
+  return String(process.env.FAKE_PI_SDK_SCENARIO ?? '').trim()
+}
+
 function createModelRegistry() {
   const models = [
     {
@@ -90,6 +94,10 @@ async function writeImplementationFile(cwd) {
   await fs.writeFile(path.join(cwd, 'sdk-implemented.txt'), 'implemented by fake sdk\n', 'utf8')
 }
 
+async function appendTesterMutation(cwd) {
+  await fs.appendFile(path.join(cwd, 'sdk-implemented.txt'), 'tester mutation\n', 'utf8')
+}
+
 function emitText(session, text) {
   session.emit({
     type: 'message_update',
@@ -132,6 +140,40 @@ async function runDeveloperPrompt(session, cwd) {
 
 async function runTesterPrompt(session, cwd) {
   session.emit({ type: 'agent_start' })
+  const scenario = getScenario()
+
+  if (scenario === 'pass_dirty_no_commit') {
+    execFileSync('git', ['add', 'TODOS.md', 'sdk-implemented.txt'], { cwd, stdio: 'ignore' })
+    const text = [
+      'Observed flow:',
+      '- Verified fake sdk change.',
+      'Player-facing result:',
+      '- PASS.',
+      'Regression check:',
+      '- Smoke command passed.',
+      'VERDICT: PASS',
+    ].join('\n')
+    emitText(session, text)
+    finalizeMessage(session, text)
+    return
+  }
+
+  if (scenario === 'edit_pass_no_commit') {
+    await appendTesterMutation(cwd)
+    const text = [
+      'Observed flow:',
+      '- Verified fake sdk change.',
+      'Player-facing result:',
+      '- PASS.',
+      'Regression check:',
+      '- Smoke command passed after tester edit.',
+      'VERDICT: PASS',
+    ].join('\n')
+    emitText(session, text)
+    finalizeMessage(session, text)
+    return
+  }
+
   execFileSync('git', ['add', 'TODOS.md', 'sdk-implemented.txt'], { cwd, stdio: 'ignore' })
   const commitMessage = 'test(harness): complete sdk flow'
   execFileSync('git', ['commit', '-m', commitMessage], { cwd, stdio: 'ignore' })
@@ -146,6 +188,20 @@ async function runTesterPrompt(session, cwd) {
     'COMMIT_CREATED: true',
     `COMMIT_MESSAGE: ${commitMessage}`,
     `COMMIT_SHA: ${commitSha}`,
+    'VERDICT: PASS',
+  ].join('\n')
+  emitText(session, text)
+  finalizeMessage(session, text)
+}
+
+async function runTesterCommitPrompt(session) {
+  session.emit({ type: 'agent_start' })
+  const commitMessage = 'test(harness): complete sdk flow'
+  const text = [
+    `COMMIT_MESSAGE: ${commitMessage}`,
+    'COMMIT_FILES:',
+    'TODOS.md',
+    'sdk-implemented.txt',
     'VERDICT: PASS',
   ].join('\n')
   emitText(session, text)
@@ -176,7 +232,13 @@ export async function createAgentSession(options) {
       this._listener?.(event)
     },
     async prompt(prompt) {
-      if (String(prompt).includes('You are the TESTER role')) {
+      const promptText = String(prompt)
+      if (promptText.includes('The implementation already passed functional review, but the final commit was not created.')) {
+        await runTesterCommitPrompt(this, options.cwd)
+        return
+      }
+
+      if (promptText.includes('You are the TESTER role')) {
         await runTesterPrompt(this, options.cwd)
         return
       }

@@ -2,6 +2,8 @@
 
 import process from 'node:process'
 import path from 'node:path'
+import fs from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { loadConfig, resolveRoleModelName, resolveRoleModel } from './pi-config.mjs'
 import {
   buildCommitPrompt,
@@ -41,6 +43,7 @@ import {
   writeSessionId,
   writeState,
   writeTextFile,
+  isSpecLikeFile,
 } from './pi-repo.mjs'
 import { runAgentTurn } from './pi-client.mjs'
 import {
@@ -154,12 +157,19 @@ function parseTesterVerdict(output) {
   return match?.[1]?.toUpperCase() ?? 'UNKNOWN'
 }
 
-function buildRetryReason(invocation) {
+function buildRetryReason(invocation, loopRecord = null) {
   const loopSignature = String(invocation?.result?.loopSignature ?? '')
   const notes = String(invocation?.result?.notes ?? '')
 
   if (loopSignature.startsWith('same_path:')) {
     const target = loopSignature.slice('same_path:'.length)
+    const strategy = getLoopStrategy(loopRecord)
+    if (strategy === 'replace_block') {
+      return `The previous turn got stuck repeatedly editing ${target}. Do not attempt another exact oldText patch. Read one narrow window, then replace the surrounding function or block in one deliberate edit.`
+    }
+    if (strategy === 'replace_section_or_blocker') {
+      return `The previous turn got stuck repeatedly editing ${target}. Stop trying patch-shaped retries on ${target}. Replace the full section deliberately, or record a blocker and move on.`
+    }
     return `The previous turn got stuck repeatedly editing ${target}. Reread ${target} exactly once before any new edit. Switch approach. Do not attempt another exact oldText patch on ${target} unless the file changed since the failed attempt.`
   }
 
@@ -328,6 +338,216 @@ function formatOutputExcerpt(output, maxChars = 4000, maxLines = 40) {
     return excerpt
   }
   return `${excerpt.slice(excerpt.length - maxChars + 16)}\n... [truncated]`
+}
+
+function extractTesterSummary(output, maxLines = 20) {
+  const raw = String(output ?? '').trim()
+  if (raw === '') {
+    return ''
+  }
+
+  const lines = raw
+    .split('\n')
+    .filter((line) => !/^\s*VERDICT:/i.test(line))
+    .filter((line) => !/^\s*COMMIT_(?:CREATED|MESSAGE|SHA|FILES):/i.test(line))
+
+  return clampPromptLines(lines.join('\n').trim(), maxLines)
+}
+
+function normalizeLoopTarget(loopSignature) {
+  const signature = String(loopSignature ?? '').trim()
+  if (signature === '') {
+    return ''
+  }
+  if (signature.startsWith('same_path:')) {
+    return signature.slice('same_path:'.length)
+  }
+  return signature
+}
+
+function loopHistoryKey(phase, target) {
+  return `${String(phase ?? '').trim()}::${String(target ?? '').trim()}`
+}
+
+function getLoopStrategy(record) {
+  const attempts = Number(record?.attempts ?? 0)
+  if (attempts <= 1) {
+    return 'smaller_range'
+  }
+  if (attempts === 2) {
+    return 'replace_block'
+  }
+  return 'replace_section_or_blocker'
+}
+
+function formatLoopStrategyHint(target, strategy) {
+  if (strategy === 'smaller_range') {
+    return `${target}: do not retry the same exact patch shape; use a smaller exact read window and a narrower replacement.`
+  }
+  if (strategy === 'replace_block') {
+    return `${target}: skip exact oldText patching and replace the surrounding function or block instead.`
+  }
+  return `${target}: stop trying patch-shaped edits; replace the full section deliberately or record a blocker and move on.`
+}
+
+function pruneLoopHistory(history, {
+  limit = 25,
+  minIteration = 0,
+} = {}) {
+  const items = Object.entries(history || {})
+    .filter(([, value]) => Number(value?.lastIteration ?? 0) >= minIteration)
+    .sort((left, right) => Number(right[1]?.lastIteration ?? 0) - Number(left[1]?.lastIteration ?? 0))
+    .slice(0, limit)
+
+  return Object.fromEntries(items)
+}
+
+function getLoopRecoveryHints(state, phase) {
+  const history = state?.loopHistory && typeof state.loopHistory === 'object'
+    ? state.loopHistory
+    : {}
+
+  return Object.values(history)
+    .filter((record) => String(record?.phase ?? '') === String(phase ?? ''))
+    .sort((left, right) => Number(right?.lastIteration ?? 0) - Number(left?.lastIteration ?? 0))
+    .slice(0, 3)
+    .map((record) => formatLoopStrategyHint(record.target, getLoopStrategy(record)))
+}
+
+function recordLoopHistory(state, {
+  phase,
+  iteration,
+  loopSignature,
+}) {
+  const target = normalizeLoopTarget(loopSignature)
+  if (target === '') {
+    return state?.loopHistory && typeof state.loopHistory === 'object'
+      ? state.loopHistory
+      : {}
+  }
+
+  const history = state?.loopHistory && typeof state.loopHistory === 'object'
+    ? { ...state.loopHistory }
+    : {}
+  const key = loopHistoryKey(phase, target)
+  const current = history[key] ?? {
+    phase,
+    target,
+    attempts: 0,
+    lastIteration: 0,
+    lastSignature: '',
+  }
+
+  history[key] = {
+    phase,
+    target,
+    attempts: Number(current.attempts ?? 0) + 1,
+    lastIteration: iteration,
+    lastSignature: String(loopSignature ?? ''),
+  }
+
+  return pruneLoopHistory(history, {
+    limit: Number.isFinite(Number(state?.loopHistoryLimit)) ? Number(state.loopHistoryLimit) : 25,
+    minIteration: Math.max(0, iteration - 20),
+  })
+}
+
+async function captureFileSignatures(cwd, files) {
+  const map = new Map()
+  for (const file of Array.isArray(files) ? files : []) {
+    const relativePath = String(file ?? '').trim()
+    if (relativePath === '' || map.has(relativePath)) {
+      continue
+    }
+
+    const absolutePath = path.resolve(cwd, relativePath)
+    try {
+      const data = await fs.readFile(absolutePath)
+      map.set(relativePath, createHash('sha1').update(data).digest('hex'))
+    } catch {
+      map.set(relativePath, '__missing__')
+    }
+  }
+  return map
+}
+
+function diffTouchedFiles(before, after) {
+  const keys = new Set([...before.keys(), ...after.keys()])
+  return [...keys]
+    .filter((file) => before.get(file) !== after.get(file))
+    .sort()
+}
+
+function classifyTesterTouchedFiles(files) {
+  const touchedFiles = Array.isArray(files) ? files.filter(Boolean) : []
+  const productFiles = touchedFiles.filter((file) => {
+    const normalized = String(file).replaceAll('\\', '/')
+    if (isSpecLikeFile(normalized)) {
+      return false
+    }
+    if (/\.md$/i.test(normalized) || /(^|\/)(docs?|changes?)\//i.test(normalized)) {
+      return false
+    }
+    return true
+  })
+
+  return {
+    touchedFiles,
+    productFiles,
+    touchedProductCode: productFiles.length > 0,
+  }
+}
+
+async function writeFailureArtifact(config, {
+  iteration,
+  phase,
+  kind,
+  status,
+  command = '',
+  exitCode = '',
+  changedFiles = [],
+  output = '',
+  testerVerdict = '',
+  testerSummary = '',
+  touchedFiles = [],
+}) {
+  const artifactDir = String(config.failureArtifactDir ?? '').trim()
+  if (artifactDir === '') {
+    return ''
+  }
+
+  const fileName = `${iteration}-${kind}.md`
+  const artifactPath = path.join(artifactDir, fileName)
+  const excerpt = formatOutputExcerpt(
+    output,
+    8000,
+    Number(config.maxFailureArtifactLines) || 80,
+  )
+  const lines = [
+    '# Failure Artifact',
+    '',
+    `- Iteration: ${iteration}`,
+    `- Phase: ${phase || 'unknown'}`,
+    `- Kind: ${kind}`,
+    `- Status: ${status}`,
+    `- Command: ${command || '(not applicable)'}`,
+    `- Exit code: ${exitCode === '' ? '(not applicable)' : exitCode}`,
+    `- Tester verdict: ${testerVerdict || '(not applicable)'}`,
+    `- Changed files: ${Array.isArray(changedFiles) && changedFiles.length > 0 ? changedFiles.join(', ') : '(none)'}`,
+    `- Tester-touched files: ${Array.isArray(touchedFiles) && touchedFiles.length > 0 ? touchedFiles.join(', ') : '(none)'}`,
+  ]
+
+  if (testerSummary.trim() !== '') {
+    lines.push('', '## Tester Summary', '', testerSummary.trim())
+  }
+
+  if (excerpt !== '') {
+    lines.push('', '## Output Excerpt', '', '```text', excerpt, '```')
+  }
+
+  await writeTextFile(artifactPath, `${lines.join('\n')}\n`)
+  await appendLog(config.logFile, `Failure artifact written: ${toDisplayPath(config, artifactPath)}`)
+  return artifactPath
 }
 
 async function recordEvent(config, event) {
@@ -659,7 +879,15 @@ async function runHarnessGitFinalize({
   }
 }
 
-async function runVerificationStep({ config, iteration, phase, kind }) {
+async function runVerificationStep({
+  config,
+  iteration,
+  phase,
+  kind,
+  testerVerdict = '',
+  testerSummary = '',
+  touchedFiles = [],
+}) {
   await updateRunOwnership(config, {
     status: 'verification_running',
     iteration,
@@ -682,6 +910,23 @@ async function runVerificationStep({ config, iteration, phase, kind }) {
     : verification.status === 'skipped'
       ? 'Verification skipped.'
       : 'Verification did not pass.'
+  let artifactPath = ''
+
+  if (verification.status === 'failed' || verification.status === 'timed_out') {
+    artifactPath = await writeFailureArtifact(config, {
+      iteration,
+      phase,
+      kind,
+      status: verification.status,
+      command: config.testCommand,
+      exitCode: verification.exitCode,
+      changedFiles,
+      output: verification.output,
+      testerVerdict,
+      testerSummary,
+      touchedFiles,
+    })
+  }
 
   await recordEvent(config, {
     iteration,
@@ -707,22 +952,31 @@ async function runVerificationStep({ config, iteration, phase, kind }) {
     stopReason: '',
     loopDetected: false,
     loopSignature: '',
-    testerVerdict: '',
+    testerVerdict,
     commitPlanFound: '',
     terminalReason: `verification_${verification.status}`,
     notes: verificationNotes,
+    artifactPath: artifactPath === '' ? '' : toDisplayPath(config, artifactPath),
     outputExcerpt: formatOutputExcerpt(verification.output),
   })
 
-  return verification
+  return {
+    ...verification,
+    artifactPath,
+  }
 }
 
-async function runMainTurnWithRetries({ config, iteration, phase, sessionId, sessionFile }) {
+async function runMainTurnWithRetries({ config, state, iteration, phase, sessionId, sessionFile }) {
   let currentSessionId = sessionId
   let currentSessionFile = sessionFile
+  let loopHistory = pruneLoopHistory(state?.loopHistory, {
+    limit: Number(config.loopHistoryLimit) || 25,
+    minIteration: Math.max(0, iteration - 20),
+  })
   let prompt = buildMainPrompt(config, {
     visualFeedback: await readLatestVisualFeedback(config),
     testerFeedback: await readLatestTesterFeedback(config),
+    loopRecoveryHints: getLoopRecoveryHints({ loopHistory }, phase),
   })
   let reason = 'main_workflow'
 
@@ -743,9 +997,29 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
     currentSessionId = invocation.result.sessionId || currentSessionId
     currentSessionFile = invocation.result.sessionFile || currentSessionFile
 
+    if (invocation.result.loopDetected && invocation.result.loopSignature) {
+      loopHistory = recordLoopHistory({
+        loopHistory,
+        loopHistoryLimit: config.loopHistoryLimit,
+      }, {
+        phase,
+        iteration,
+        loopSignature: invocation.result.loopSignature,
+      })
+    }
+
+    const loopRecord = invocation.result.loopDetected
+      ? loopHistory[loopHistoryKey(phase, normalizeLoopTarget(invocation.result.loopSignature))]
+      : null
+    const loopBudgetExceeded = (
+      invocation.result.loopDetected
+      && Number(loopRecord?.attempts ?? 0) >= (Number(config.sameFileLoopBudget) || 2)
+    )
+
     const shouldRetryForTimeout = (
       (invocation.result.status === 'timed_out' || invocation.result.status === 'stalled')
       && attempt < config.idleRetryLimit
+      && !loopBudgetExceeded
     )
 
     const noRepoChange = (
@@ -761,6 +1035,7 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
     if (noRepoChange && !shouldRetryForNoChange) {
       return {
         ...invocation,
+        loopHistory,
         result: {
           ...invocation.result,
           status: 'stalled',
@@ -771,16 +1046,30 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
     }
 
     if (!shouldRetryForTimeout && !shouldRetryForNoChange) {
-      return invocation
+      if (loopBudgetExceeded) {
+        return {
+          ...invocation,
+          loopHistory,
+          result: {
+            ...invocation.result,
+            notes: `${invocation.result.notes} same_file_loop_budget_exceeded=true`,
+          },
+        }
+      }
+      return {
+        ...invocation,
+        loopHistory,
+      }
     }
 
     reason = shouldRetryForTimeout
-      ? buildRetryReason(invocation)
+      ? buildRetryReason(invocation, loopRecord)
       : 'The previous turn ended without changing the repo. Continue and complete one coherent task.'
     prompt = buildSteeringPrompt(config, reason, {
       visualFeedback: await readLatestVisualFeedback(config),
       testerFeedback: await readLatestTesterFeedback(config),
       largeFileWarnings: findLargeFileWarnings(config, listChangedFiles(config.cwd)),
+      loopRecoveryHints: getLoopRecoveryHints({ loopHistory }, phase),
     })
 
     if (shouldRetryForTimeout || shouldRetryForNoChange) {
@@ -792,7 +1081,7 @@ async function runMainTurnWithRetries({ config, iteration, phase, sessionId, ses
   throw new Error('Retry loop exited unexpectedly.')
 }
 
-async function runFixTurn({ config, iteration, phase, sessionId, sessionFile, testerOutput }) {
+async function runFixTurn({ config, state, iteration, phase, sessionId, sessionFile, testerOutput }) {
   const largeFileWarnings = findLargeFileWarnings(config, listChangedFiles(config.cwd))
   const fixPrompt = buildFixPrompt(
     config,
@@ -801,6 +1090,7 @@ async function runFixTurn({ config, iteration, phase, sessionId, sessionFile, te
       visualFeedback: await readLatestVisualFeedback(config),
       testerFeedback: await readLatestTesterFeedback(config),
       largeFileWarnings,
+      loopRecoveryHints: getLoopRecoveryHints(state, phase),
     }
   )
   return await runAgentInvocation({
@@ -819,6 +1109,7 @@ async function runFixTurn({ config, iteration, phase, sessionId, sessionFile, te
 
 async function runDeveloperVerificationAndFix({
   config,
+  state,
   iteration,
   phase,
   sessionId,
@@ -858,6 +1149,7 @@ async function runDeveloperVerificationAndFix({
 
     const fixInvocation = await runFixTurn({
       config,
+      state,
       iteration,
       phase,
       sessionId,
@@ -917,6 +1209,8 @@ async function runTesterTurn({
     testerFeedback: await readLatestTesterFeedback(config),
     largeFileWarnings,
   })
+  const beforeFiles = listChangedFiles(config.cwd)
+  const beforeSignatures = await captureFileSignatures(config.cwd, beforeFiles)
 
   const invocation = await runAgentInvocation({
     config,
@@ -936,6 +1230,7 @@ async function runTesterTurn({
   const notesWithVerdict = `${invocation.result.notes} tester_verdict=${verdict} commit_plan_files=${commitPlan.files.length}`.trim()
   let testerStatus = invocation.result.status
   let terminalReason = invocation.result.terminalReason || ''
+  const afterFiles = listChangedFiles(config.cwd)
 
   if (testerStatus === 'success' && verdict === 'FAIL') {
     testerStatus = 'failed'
@@ -953,21 +1248,41 @@ async function runTesterTurn({
   } else if (testerStatus === 'success') {
     terminalReason = didInvocationCreateCommit(invocation)
       ? 'tester_pass_with_agent_commit'
-      : invocation.repoChanged
+      : afterFiles.length > 0
         ? 'tester_left_uncommitted_changes'
         : 'awaiting_agent_commit'
   }
+
+  const afterSignatures = await captureFileSignatures(config.cwd, [...new Set([...beforeFiles, ...afterFiles])])
+  const testerTouched = classifyTesterTouchedFiles(diffTouchedFiles(beforeSignatures, afterSignatures))
+  const artifactPath = testerStatus === 'failed'
+    ? await writeFailureArtifact(config, {
+      iteration,
+      phase,
+      kind: 'tester_verdict',
+      status: testerStatus,
+      changedFiles: invocation.changedFiles,
+      output: invocation.result.output,
+      testerVerdict: verdict,
+      testerSummary: extractTesterSummary(invocation.result.output),
+      touchedFiles: testerTouched.touchedFiles,
+    })
+    : ''
 
   return {
     ...invocation,
     testerVerdict: verdict,
     commitPlanFound: commitPlan.message !== '' && commitPlan.files.length > 0,
     commitPlan,
+    artifactPath,
+    testerTouchedFiles: testerTouched.touchedFiles,
+    testerTouchedProductCode: testerTouched.touchedProductCode,
+    testerTouchedProductFiles: testerTouched.productFiles,
     result: {
       ...invocation.result,
       status: testerStatus,
       terminalReason,
-      notes: notesWithVerdict,
+      notes: `${notesWithVerdict}${artifactPath ? ` artifact=${toDisplayPath(config, artifactPath)}` : ''}`.trim(),
     },
   }
 }
@@ -1037,6 +1352,93 @@ async function runTesterCommitTurn({
       notes: notesWithVerdict,
     },
   }
+}
+
+async function runTesterEditVerification({
+  config,
+  iteration,
+  phase,
+  task,
+  testerInvocation,
+}) {
+  const touchedFiles = Array.isArray(testerInvocation.testerTouchedFiles)
+    ? testerInvocation.testerTouchedFiles
+    : []
+  const touchedProductCode = testerInvocation.testerTouchedProductCode === true
+
+  if (touchedFiles.length === 0) {
+    return {
+      status: 'not_needed',
+      touchedFiles,
+      touchedProductCode,
+      note: '',
+      verification: null,
+    }
+  }
+
+  const note = [
+    `tester_touched_files=${touchedFiles.join(',')}`,
+    `tester_touched_product_code=${touchedProductCode}`,
+  ].join(' ')
+
+  const verification = await runVerificationStep({
+    config,
+    iteration,
+    phase,
+    kind: 'tester_reverification',
+    testerVerdict: testerInvocation.testerVerdict,
+    testerSummary: extractTesterSummary(testerInvocation.result.output),
+    touchedFiles,
+  })
+
+  if (verification.status !== 'passed' && verification.status !== 'skipped') {
+    await writeTesterFeedback(config, {
+      iteration,
+      phase,
+      task,
+      source: 'tester_reverification',
+      status: verification.status,
+      output: verification.output,
+    })
+  }
+
+  return {
+    status: verification.status,
+    touchedFiles,
+    touchedProductCode,
+    note,
+    verification,
+  }
+}
+
+async function runTesterCommitFallback({
+  config,
+  iteration,
+  phase,
+  task,
+  noteParts,
+  reason,
+}) {
+  const testerCommitInvocation = await runTesterCommitTurn({
+    config,
+    iteration,
+    phase,
+    task,
+    changedFiles: listChangedFiles(config.cwd),
+    developerNotes: compactNotePartsForPrompt(config, noteParts),
+    reason,
+  })
+
+  await writeTesterFeedback(config, {
+    iteration,
+    phase,
+    task,
+    source: 'tester_commit_plan',
+    status: testerCommitInvocation.result.status,
+    output: testerCommitInvocation.result.output,
+  })
+
+  return testerCommitInvocation
 }
 
 async function runVisualReview({ config, iteration, phase, task, changedFiles }) {
@@ -1294,6 +1696,7 @@ async function runIteration({ config, state, iteration }) {
 
   const mainInvocation = await runMainTurnWithRetries({
     config,
+    state,
     iteration,
     phase,
     sessionId: startingSessionId,
@@ -1320,6 +1723,10 @@ async function runIteration({ config, state, iteration }) {
   } else if (mainInvocation.result.status === 'success') {
     const developerVerification = await runDeveloperVerificationAndFix({
       config,
+      state: {
+        ...state,
+        loopHistory: mainInvocation.loopHistory ?? state.loopHistory,
+      },
       iteration,
       phase,
       sessionId,
@@ -1377,15 +1784,37 @@ async function runIteration({ config, state, iteration }) {
       })
 
       let commitPlan = testerInvocation.commitPlan
+      let shouldFinalizeWithHarness = config.commitMode === 'plan'
 
-      if (testerStatus === 'success' && config.commitMode === 'plan' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
-        const testerCommitInvocation = await runTesterCommitTurn({
+      if (testerStatus === 'success') {
+        const testerEditVerification = await runTesterEditVerification({
           config,
           iteration,
           phase,
           task,
-          changedFiles: listChangedFiles(config.cwd),
-          developerNotes: compactNotePartsForPrompt(config, noteParts),
+          testerInvocation,
+        })
+
+        if (testerEditVerification.note !== '') {
+          noteParts.push(`tester_reverification: ${testerEditVerification.note}`)
+        }
+        if (testerEditVerification.status !== 'not_needed') {
+          finalVerificationStatus = testerEditVerification.verification?.status || finalVerificationStatus
+        }
+        if (testerEditVerification.status !== 'not_needed' && testerEditVerification.status !== 'passed' && testerEditVerification.status !== 'skipped') {
+          testerStatus = 'failed'
+          terminalReason = `verification_${testerEditVerification.status}`
+          noteParts.push(`tester_reverification: status=${testerEditVerification.status}`)
+        }
+      }
+
+      if (testerStatus === 'success' && config.commitMode === 'plan' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
+        const testerCommitInvocation = await runTesterCommitFallback({
+          config,
+          iteration,
+          phase,
+          task,
+          noteParts,
           reason: 'tester_passed_without_commit',
         })
 
@@ -1395,18 +1824,31 @@ async function runIteration({ config, state, iteration }) {
         terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
         largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
         noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
-        await writeTesterFeedback(config, {
+        commitPlan = testerCommitInvocation.commitPlan
+        shouldFinalizeWithHarness = testerStatus === 'success'
+      }
+
+      if (testerStatus === 'success' && config.commitMode !== 'plan' && !didInvocationCreateCommit(testerInvocation) && listChangedFiles(config.cwd).length > 0) {
+        const testerCommitInvocation = await runTesterCommitFallback({
+          config,
           iteration,
           phase,
           task,
-          source: 'tester_commit_plan',
-          status: testerStatus,
-          output: testerCommitInvocation.result.output,
+          noteParts,
+          reason: 'tester_passed_without_agent_commit',
         })
+
+        testerStatus = testerCommitInvocation.result.status
+        testerVerdict = testerCommitInvocation.testerVerdict
+        commitPlanFound = testerCommitInvocation.commitPlanFound === true
+        terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
+        largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
+        noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
         commitPlan = testerCommitInvocation.commitPlan
+        shouldFinalizeWithHarness = testerStatus === 'success'
       }
 
-      if (testerStatus === 'success' && config.commitMode === 'plan') {
+      if (testerStatus === 'success' && shouldFinalizeWithHarness) {
         const gitFinalize = await runHarnessGitFinalize({
           config,
           iteration,
@@ -1424,7 +1866,7 @@ async function runIteration({ config, state, iteration }) {
         } else {
           testerStatus = 'stalled'
           gitFinalizeStatus = 'awaiting_agent_commit'
-          terminalReason = testerInvocation.repoChanged
+          terminalReason = listChangedFiles(config.cwd).length > 0
             ? 'tester_left_uncommitted_changes'
             : 'awaiting_agent_commit'
           noteParts.push('git_finalize: committed_by_agent=false')
@@ -1440,6 +1882,10 @@ async function runIteration({ config, state, iteration }) {
     if (testerStatus === 'failed') {
       const fixInvocation = await runFixTurn({
         config,
+        state: {
+          ...state,
+          loopHistory: mainInvocation.loopHistory ?? state.loopHistory,
+        },
         iteration,
         phase,
         sessionId,
@@ -1481,15 +1927,37 @@ async function runIteration({ config, state, iteration }) {
         })
 
         let commitPlan = testerRecheck.commitPlan
+        let shouldFinalizeWithHarness = config.commitMode === 'plan'
 
-        if (testerStatus === 'success' && config.commitMode === 'plan' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
-          const testerCommitInvocation = await runTesterCommitTurn({
+        if (testerStatus === 'success') {
+          const testerEditVerification = await runTesterEditVerification({
             config,
             iteration,
             phase,
             task,
-            changedFiles: listChangedFiles(config.cwd),
-            developerNotes: compactNotePartsForPrompt(config, noteParts),
+            testerInvocation: testerRecheck,
+          })
+
+          if (testerEditVerification.note !== '') {
+            noteParts.push(`tester_reverification: ${testerEditVerification.note}`)
+          }
+          if (testerEditVerification.status !== 'not_needed') {
+            finalVerificationStatus = testerEditVerification.verification?.status || finalVerificationStatus
+          }
+          if (testerEditVerification.status !== 'not_needed' && testerEditVerification.status !== 'passed' && testerEditVerification.status !== 'skipped') {
+            testerStatus = 'failed'
+            terminalReason = `verification_${testerEditVerification.status}`
+            noteParts.push(`tester_reverification: status=${testerEditVerification.status}`)
+          }
+        }
+
+        if (testerStatus === 'success' && config.commitMode === 'plan' && (commitPlan.message === '' || commitPlan.files.length === 0)) {
+          const testerCommitInvocation = await runTesterCommitFallback({
+            config,
+            iteration,
+            phase,
+            task,
+            noteParts,
             reason: 'tester_recheck_passed_without_commit',
           })
 
@@ -1499,18 +1967,31 @@ async function runIteration({ config, state, iteration }) {
           terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
           largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
           noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
-          await writeTesterFeedback(config, {
+          commitPlan = testerCommitInvocation.commitPlan
+          shouldFinalizeWithHarness = testerStatus === 'success'
+        }
+
+      if (testerStatus === 'success' && config.commitMode !== 'plan' && !didInvocationCreateCommit(testerRecheck) && listChangedFiles(config.cwd).length > 0) {
+          const testerCommitInvocation = await runTesterCommitFallback({
+            config,
             iteration,
             phase,
             task,
-            source: 'tester_commit_plan',
-            status: testerStatus,
-            output: testerCommitInvocation.result.output,
+            noteParts,
+            reason: 'tester_recheck_passed_without_agent_commit',
           })
+
+          testerStatus = testerCommitInvocation.result.status
+          testerVerdict = testerCommitInvocation.testerVerdict
+          commitPlanFound = testerCommitInvocation.commitPlanFound === true
+          terminalReason = testerCommitInvocation.result.terminalReason || terminalReason
+          largeFileWarnings = mergeLargeFileWarnings(largeFileWarnings, findLargeFileWarnings(config, listChangedFiles(config.cwd)))
+          noteParts.push(`tester_commit: ${testerCommitInvocation.result.notes}`)
           commitPlan = testerCommitInvocation.commitPlan
+          shouldFinalizeWithHarness = testerStatus === 'success'
         }
 
-        if (testerStatus === 'success' && config.commitMode === 'plan') {
+        if (testerStatus === 'success' && shouldFinalizeWithHarness) {
           const gitFinalize = await runHarnessGitFinalize({
             config,
             iteration,
@@ -1528,7 +2009,7 @@ async function runIteration({ config, state, iteration }) {
           } else {
             testerStatus = 'stalled'
             gitFinalizeStatus = 'awaiting_agent_commit'
-            terminalReason = testerRecheck.repoChanged
+            terminalReason = listChangedFiles(config.cwd).length > 0
               ? 'tester_left_uncommitted_changes'
               : 'awaiting_agent_commit'
             noteParts.push('git_finalize: committed_by_agent=false')
@@ -1645,6 +2126,7 @@ async function runIteration({ config, state, iteration }) {
     lastRunAt: timestamp(),
     successfulIterations,
     lastVisualStatus: visualStatus,
+    loopHistory: mainInvocation.loopHistory ?? state.loopHistory ?? {},
     runId: config.runId || '',
     inProgress: null,
   }

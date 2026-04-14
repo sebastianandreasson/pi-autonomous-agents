@@ -46,6 +46,21 @@ async function main() {
     }
   }
 
+  const failureArtifacts = recent
+    .filter((event) => String(event.artifactPath ?? '').trim() !== '')
+    .slice(-5)
+
+  if (failureArtifacts.length > 0) {
+    console.log('\nFailure artifacts:')
+    for (const event of failureArtifacts) {
+      const excerpt = String(event.outputExcerpt ?? '').trim()
+      console.log(`- iteration ${event.iteration} ${event.kind}: ${event.artifactPath}`)
+      if (excerpt !== '') {
+        console.log(`  excerpt: ${excerpt.split('\n')[0]}`)
+      }
+    }
+  }
+
   const last = recent.at(-1)
   if (!last) {
     return

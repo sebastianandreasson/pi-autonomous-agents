@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-const CSV_HEADER = 'timestamp,run_id,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,role,model,tool_calls,tool_errors,message_updates,stop_reason,loop_detected,loop_signature,tester_verdict,commit_plan_found,terminal_reason,risk_warnings,notes\n'
+const CSV_HEADER = 'timestamp,run_id,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,role,model,tool_calls,tool_errors,message_updates,stop_reason,loop_detected,loop_signature,tester_verdict,commit_plan_found,terminal_reason,risk_warnings,artifact_path,output_excerpt,notes\n'
 const DEFAULT_JSONL_TAIL_BYTES = 512 * 1024
 const JSONL_TAIL_CHUNK_BYTES = 64 * 1024
 
@@ -24,6 +24,9 @@ export async function ensureTelemetryFiles(config) {
   await fs.writeFile(config.changedFilesFile, '', 'utf8')
   await fs.writeFile(config.lastPromptFile, '', 'utf8')
   await fs.writeFile(config.lastIterationSummaryFile, '', 'utf8')
+  if (config.failureArtifactDir) {
+    await fs.mkdir(config.failureArtifactDir, { recursive: true })
+  }
 
   await fs.mkdir(path.dirname(config.logFile), { recursive: true })
   await fs.mkdir(path.dirname(config.telemetryJsonl), { recursive: true })
@@ -88,6 +91,8 @@ export async function appendTelemetry(config, event) {
     event.commitPlanFound,
     event.terminalReason,
     event.riskWarnings,
+    event.artifactPath,
+    event.outputExcerpt,
     event.notes,
   ].map(csvEscape).join(',')
 

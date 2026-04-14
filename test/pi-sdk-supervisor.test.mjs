@@ -21,11 +21,15 @@ async function makeTempRepo() {
   return cwd
 }
 
-async function writeTestRepo(cwd) {
+function shellQuote(value) {
+  return JSON.stringify(String(value))
+}
+
+async function writeTestRepo(cwd, overrides = {}) {
   await fs.writeFile(path.join(cwd, 'TODOS.md'), '## Phase 1\n\n- [ ] SDK supervisor test\n', 'utf8')
   await fs.writeFile(path.join(cwd, 'DEVELOPER.md'), 'Developer instructions.\n', 'utf8')
   await fs.writeFile(path.join(cwd, 'TESTER.md'), 'Tester instructions.\n', 'utf8')
-  await fs.writeFile(path.join(cwd, 'pi.config.json'), `${JSON.stringify({
+  const config = {
     transport: 'sdk',
     taskFile: 'TODOS.md',
     developerInstructionsFile: 'DEVELOPER.md',
@@ -48,7 +52,9 @@ async function writeTestRepo(cwd) {
     toolNoEventTimeoutSeconds: 3600,
     sleepBetweenSeconds: 1,
     maxIterations: 1,
-  }, null, 2)}\n`, 'utf8')
+    ...overrides,
+  }
+  await fs.writeFile(path.join(cwd, 'pi.config.json'), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
   execFileSync('git', ['add', '.'], { cwd, stdio: 'ignore' })
   execFileSync('git', ['commit', '-m', 'initial'], { cwd, stdio: 'ignore' })
 }
@@ -113,4 +119,94 @@ test('sdk transport completes one supervisor iteration end-to-end', async (t) =>
 
   const commitCount = Number.parseInt(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd, encoding: 'utf8' }).trim(), 10)
   assert.equal(commitCount, 2)
+})
+
+test('sdk transport falls back to harness commit finalization when tester leaves a dirty PASS', async (t) => {
+  const cwd = await makeTempRepo()
+  await writeTestRepo(cwd)
+
+  t.after(async () => {
+    await fs.rm(cwd, { recursive: true, force: true })
+  })
+
+  const child = spawn(process.execPath, [cliFile, 'once'], {
+    cwd,
+    env: {
+      ...process.env,
+      PI_CONFIG_FILE: 'pi.config.json',
+      PI_SDK_MODULE: fakeSdkFile,
+      FAKE_PI_SDK_SCENARIO: 'pass_dirty_no_commit',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk.toString()
+  })
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString()
+  })
+
+  const { code, signal } = await waitForExit(child)
+  assert.equal(signal, null)
+  assert.equal(code, 0, `stdout:\n${stdout}\n\nstderr:\n${stderr}`)
+
+  const summary = JSON.parse(await fs.readFile(path.join(cwd, '.pi-last-iteration.json'), 'utf8'))
+  assert.equal(summary.testerStatus, 'success')
+  assert.equal(summary.gitFinalizeStatus, 'success')
+  assert.equal(summary.terminalReason, 'completed_phase_step')
+
+  const headMessage = execFileSync('git', ['log', '-1', '--pretty=%s'], { cwd, encoding: 'utf8' }).trim()
+  assert.equal(headMessage, 'test(harness): complete sdk flow')
+})
+
+test('sdk transport re-runs smoke after tester edits before commit fallback', async (t) => {
+  const cwd = await makeTempRepo()
+  const verificationCode = [
+    `const fs=require('node:fs')`,
+    `const p='verification-count.txt'`,
+    `let n=0`,
+    `try{n=Number(fs.readFileSync(p,'utf8'))}catch{}`,
+    `fs.writeFileSync(p,String(n+1))`,
+  ].join(';')
+  await writeTestRepo(cwd, {
+    testCommand: `${shellQuote(process.execPath)} -e ${shellQuote(verificationCode)}`,
+  })
+
+  t.after(async () => {
+    await fs.rm(cwd, { recursive: true, force: true })
+  })
+
+  const child = spawn(process.execPath, [cliFile, 'once'], {
+    cwd,
+    env: {
+      ...process.env,
+      PI_CONFIG_FILE: 'pi.config.json',
+      PI_SDK_MODULE: fakeSdkFile,
+      FAKE_PI_SDK_SCENARIO: 'edit_pass_no_commit',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk.toString()
+  })
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString()
+  })
+
+  const { code, signal } = await waitForExit(child)
+  assert.equal(signal, null)
+  assert.equal(code, 0, `stdout:\n${stdout}\n\nstderr:\n${stderr}`)
+
+  const verificationCount = await fs.readFile(path.join(cwd, 'verification-count.txt'), 'utf8')
+  assert.equal(verificationCount.trim(), '2')
+
+  const summary = JSON.parse(await fs.readFile(path.join(cwd, '.pi-last-iteration.json'), 'utf8'))
+  assert.equal(summary.verificationStatus, 'passed')
+  assert.equal(summary.testerStatus, 'success')
 })

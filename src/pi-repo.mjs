@@ -57,6 +57,7 @@ export async function readState(stateFile) {
       lastStatus: '',
       lastVerificationStatus: '',
       lastVisualStatus: '',
+      loopHistory: {},
       lastRunAt: '',
       runId: '',
       inProgress: null,
@@ -75,6 +76,7 @@ export async function readState(stateFile) {
       lastStatus: '',
       lastVerificationStatus: '',
       lastVisualStatus: '',
+      loopHistory: {},
       lastRunAt: '',
       runId: '',
       inProgress: null,
@@ -483,7 +485,7 @@ function countLines(text) {
   return normalized.split('\n').length
 }
 
-function isSpecLikeFile(filePath) {
+export function isSpecLikeFile(filePath) {
   const normalized = String(filePath ?? '').replaceAll('\\', '/')
   return /(^|\/)(e2e|test|tests|spec|specs)\//.test(normalized)
     || /\.(spec|test)\.[cm]?[jt]sx?$/.test(normalized)

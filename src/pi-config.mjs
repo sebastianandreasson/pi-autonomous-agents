@@ -259,6 +259,7 @@ export function loadConfig(mode = 'once') {
     maxTesterFeedbackLines: readInt('PI_MAX_TESTER_FEEDBACK_LINES', file.maxTesterFeedbackLines, 32),
     maxPromptNotesLines: readInt('PI_MAX_PROMPT_NOTES_LINES', file.maxPromptNotesLines, 16),
     maxVerificationExcerptLines: readInt('PI_MAX_VERIFICATION_EXCERPT_LINES', file.maxVerificationExcerptLines, 40),
+    maxFailureArtifactLines: readInt('PI_MAX_FAILURE_ARTIFACT_LINES', file.maxFailureArtifactLines, 80),
     largeFileWarningLines: readInt('PI_LARGE_FILE_WARNING_LINES', file.largeFileWarningLines, 500),
     largeSpecWarningLines: readInt('PI_LARGE_SPEC_WARNING_LINES', file.largeSpecWarningLines, 300),
     piTools: readString('PI_TOOLS', file.piTools, 'read,edit,write,find,ls,bash'),
@@ -280,6 +281,8 @@ export function loadConfig(mode = 'once') {
     verificationTimeoutSeconds: readInt('PI_VERIFICATION_TIMEOUT', file.verificationTimeoutSeconds, 300),
     idleRetryLimit: readInt('PI_IDLE_RETRY_LIMIT', file.idleRetryLimit, 1),
     noChangeRetryLimit: readInt('PI_NO_CHANGE_RETRY_LIMIT', file.noChangeRetryLimit, 1),
+    sameFileLoopBudget: readInt('PI_SAME_FILE_LOOP_BUDGET', file.sameFileLoopBudget, 2),
+    loopHistoryLimit: readInt('PI_LOOP_HISTORY_LIMIT', file.loopHistoryLimit, 25),
     visualFeedbackFile: resolveFromCwd(
       cwd,
       'PI_VISUAL_FEEDBACK_FILE',
@@ -297,6 +300,12 @@ export function loadConfig(mode = 'once') {
       'PI_TESTER_FEEDBACK_HISTORY_DIR',
       file.testerFeedbackHistoryDir,
       'pi-output/tester-feedback/history'
+    ),
+    failureArtifactDir: resolveFromCwd(
+      cwd,
+      'PI_FAILURE_ARTIFACT_DIR',
+      file.failureArtifactDir,
+      'pi-output/failure-artifacts'
     ),
     visualReviewHistoryDir: resolveFromCwd(
       cwd,

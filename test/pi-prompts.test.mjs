@@ -28,6 +28,17 @@ test('developer prompt uses repo-relative instruction paths', () => {
   assert.match(prompt, /Use read for source inspection/i)
 })
 
+test('developer prompt includes loop recovery hints when present', () => {
+  const prompt = buildMainPrompt(baseConfig, {
+    loopRecoveryHints: [
+      'src/game/components/MapScreen.tsx: skip exact oldText patching and replace the surrounding function or block instead.',
+    ],
+  })
+
+  assert.match(prompt, /Recent loop-recovery constraints:/)
+  assert.match(prompt, /MapScreen\.tsx/)
+})
+
 test('tester prompt uses repo-relative instruction paths', () => {
   const prompt = buildTesterPrompt(baseConfig, {
     phase: 'Phase 1',
