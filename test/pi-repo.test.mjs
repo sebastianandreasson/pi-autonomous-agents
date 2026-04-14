@@ -11,6 +11,7 @@ import {
   listChangedFiles,
   readJsonFile,
   releaseRunLock,
+  watchParentProcess,
 } from '../src/pi-repo.mjs'
 
 async function makeTempRepo() {
@@ -125,4 +126,23 @@ test('acquireRunLock recovers a stale lock owned by a dead pid', async () => {
   assert.equal(result.acquired, true)
   assert.equal(result.staleLock.runId, 'stale-run')
   assert.equal((await readJsonFile(lockFile, null)).runId, 'fresh-run')
+})
+
+test('watchParentProcess exits when the expected parent pid is already dead', async () => {
+  const exitInfo = await new Promise((resolve) => {
+    const stopWatching = watchParentProcess(resolve, {
+      parentPid: 999999,
+      intervalMs: 100,
+    })
+
+    setTimeout(() => {
+      stopWatching()
+      resolve(null)
+    }, 1000)
+  })
+
+  assert.deepEqual(exitInfo, {
+    expectedParentPid: 999999,
+    currentParentPid: process.ppid,
+  })
 })

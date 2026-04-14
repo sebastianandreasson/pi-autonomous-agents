@@ -284,7 +284,8 @@ export function watchParentProcess(onParentExit, options = {}) {
     }
 
     const currentParentPid = normalizePid(process.ppid)
-    if (currentParentPid === expectedParentPid && currentParentPid > 1) {
+    const parentStillRunning = isProcessRunning(expectedParentPid)
+    if (currentParentPid === expectedParentPid && currentParentPid > 1 && parentStillRunning) {
       return
     }
 
