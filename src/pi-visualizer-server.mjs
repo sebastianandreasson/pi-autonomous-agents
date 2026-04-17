@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { readJsonlTail, readTelemetryTail } from './pi-telemetry.mjs'
 import { readJsonFile } from './pi-repo.mjs'
+import { readTokenUsageSummary } from './pi-token-analysis.mjs'
 import { deriveFlowSnapshot, deriveStageGraph, formatActiveLabel } from './pi-visualizer-shared.mjs'
 
 export function readVisualizerHost() {
@@ -214,6 +215,8 @@ function getRunScopedConfig(config, runId) {
     runId,
     telemetryJsonl: path.join(runDir, 'pi_telemetry.jsonl'),
     telemetryCsv: path.join(runDir, 'pi_telemetry.csv'),
+    tokenUsageEventsFile: path.join(runDir, 'token-usage.events.jsonl'),
+    tokenUsageSummaryFile: path.join(runDir, 'token-usage.summary.json'),
     stateFile: path.join(runDir, 'state.json'),
     lastIterationSummaryFile: path.join(runDir, 'last-iteration.json'),
     lastAgentOutputFile: path.join(runDir, 'last-output.txt'),
@@ -277,12 +280,13 @@ export async function buildSnapshot(config, queryRunId = '') {
   const selectedRunId = resolveSelectedRunId(queryRunId, activeRun, runs)
   const selectedConfig = selectedRunId !== '' ? getRunScopedConfig(config, selectedRunId) : config
 
-  const [state, summary, telemetry, currentOutput, liveFeed] = await Promise.all([
+  const [state, summary, telemetry, currentOutput, liveFeed, tokenBreakdown] = await Promise.all([
     readJsonFile(selectedConfig.stateFile, null),
     readJsonFile(selectedConfig.lastIterationSummaryFile, null),
     readTelemetryTail(selectedConfig, 160, 512 * 1024),
     readOptionalText(selectedConfig.lastAgentOutputFile, 5000),
     readJsonlTail(selectedConfig.liveFeedFile, { maxItems: 300, maxBytes: 768 * 1024 }),
+    readTokenUsageSummary(selectedConfig),
   ])
 
   const flowOptions = {
@@ -339,6 +343,7 @@ export async function buildSnapshot(config, queryRunId = '') {
     lastOutput: currentOutput,
     liveFeed: sortedLiveFeed,
     recentTelemetry,
+    tokenBreakdown,
   }
 }
 

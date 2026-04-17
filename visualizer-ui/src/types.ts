@@ -87,6 +87,17 @@ export type LiveFeedEntry = {
   role?: string
   kind?: string
   toolName?: string
+  sessionId?: string
+  model?: string
+  attributionKind?: string
+  primaryFile?: string
+  toolNames?: string[]
+  files?: string[]
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 export type TelemetryEvent = {
@@ -99,6 +110,54 @@ export type TelemetryEvent = {
   outputExcerpt?: string
   durationSeconds?: number
   terminalReason?: string
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+export type TokenBucket = {
+  key: string
+  label: string
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  eventCount: number
+}
+
+export type TokenBreakdown = {
+  schemaVersion?: number
+  generatedAt?: string
+  source: {
+    eventCount: number
+  }
+  totals: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    eventCount: number
+  }
+  coverage: {
+    fileAttributedTokens: number
+    unattributedTokens: number
+    fileAttributionRatio: number
+  }
+  breakdowns: {
+    byKind: TokenBucket[]
+    byRole: TokenBucket[]
+    byPhase: TokenBucket[]
+    byModel: TokenBucket[]
+    bySession: TokenBucket[]
+    byAttribution: TokenBucket[]
+    byTool: TokenBucket[]
+    byFile: TokenBucket[]
+    byDirectory: TokenBucket[]
+  }
 }
 
 export type VisualizerSnapshot = {
@@ -123,4 +182,5 @@ export type VisualizerSnapshot = {
   lastOutput: string
   liveFeed: LiveFeedEntry[]
   recentTelemetry: TelemetryEvent[]
+  tokenBreakdown: TokenBreakdown
 }

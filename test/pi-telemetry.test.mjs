@@ -30,6 +30,8 @@ test('ensureTelemetryFiles prepares summary artifacts and structured CSV header'
   const csv = await fs.readFile(config.telemetryCsv, 'utf8')
   assert.match(csv, /tool_calls/)
   assert.match(csv, /run_id/)
+  assert.match(csv, /input_tokens/)
+  assert.match(csv, /total_tokens/)
   assert.match(csv, /stop_reason/)
   assert.match(csv, /terminal_reason/)
   assert.match(csv, /artifact_path/)
@@ -73,6 +75,11 @@ test('appendTelemetry writes structured telemetry columns', async () => {
     retryCount: 0,
     role: 'tester',
     model: 'local/tester',
+    inputTokens: 500,
+    outputTokens: 80,
+    totalTokens: 580,
+    cacheReadTokens: 25,
+    cacheWriteTokens: 0,
     toolCalls: 3,
     toolErrors: 0,
     messageUpdates: 8,
@@ -90,6 +97,7 @@ test('appendTelemetry writes structured telemetry columns', async () => {
   const csv = await fs.readFile(config.telemetryCsv, 'utf8')
   assert.match(csv, /tester/)
   assert.match(csv, /local\/tester/)
+  assert.match(csv, /580/)
   assert.match(csv, /tester_pass_with_commit_plan/)
   assert.match(csv, /run-1/)
   assert.match(csv, /failure-artifacts/)

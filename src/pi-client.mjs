@@ -11,6 +11,7 @@ import {
   writeTextFile,
 } from './pi-repo.mjs'
 import { runSdkTurn } from './pi-sdk-turn.mjs'
+import { appendTokenUsageEvent } from './pi-token-analysis.mjs'
 
 function truncateForNotes(text) {
   const trimmed = text.trim()
@@ -26,6 +27,7 @@ function formatLastAgentOutput(response) {
     `sessionId: ${String(response.sessionId ?? '')}`,
     `sessionFile: ${String(response.sessionFile ?? '')}`,
     `terminalReason: ${String(response.terminalReason ?? '')}`,
+    `tokens: total=${Number(response.totalTokens ?? 0)} input=${Number(response.inputTokens ?? 0)} output=${Number(response.outputTokens ?? 0)} cacheRead=${Number(response.cacheReadTokens ?? 0)} cacheWrite=${Number(response.cacheWriteTokens ?? 0)}`,
     `notes: ${String(response.notes ?? '').trim()}`,
   ]
 
@@ -81,8 +83,47 @@ function sanitizeLiveFeedEvent(filePath, event) {
     kind: String(event?.kind ?? ''),
     type: String(event?.type ?? 'event'),
     toolName: String(event?.toolName ?? ''),
+    sessionId: String(event?.sessionId ?? ''),
+    model: String(event?.model ?? ''),
     isError: event?.isError === true,
     text: truncateText(event?.text ?? '', MAX_LIVE_FEED_TEXT),
+  }
+
+  const numericFields = {
+    inputTokens: Number(event?.inputTokens),
+    outputTokens: Number(event?.outputTokens),
+    totalTokens: Number(event?.totalTokens),
+    cacheReadTokens: Number(event?.cacheReadTokens),
+    cacheWriteTokens: Number(event?.cacheWriteTokens),
+  }
+  for (const [key, value] of Object.entries(numericFields)) {
+    if (Number.isFinite(value) && value > 0) {
+      normalized[key] = value
+    }
+  }
+
+  const attributionKind = String(event?.attributionKind ?? '').trim()
+  if (attributionKind !== '') {
+    normalized.attributionKind = attributionKind
+  }
+
+  const primaryFile = String(event?.primaryFile ?? '').trim()
+  if (primaryFile !== '') {
+    normalized.primaryFile = primaryFile
+  }
+
+  const toolNames = Array.isArray(event?.toolNames)
+    ? [...new Set(event.toolNames.map((value) => String(value ?? '').trim()).filter(Boolean))]
+    : []
+  if (toolNames.length > 0) {
+    normalized.toolNames = toolNames
+  }
+
+  const files = Array.isArray(event?.files)
+    ? [...new Set(event.files.map((value) => String(value ?? '').trim()).filter(Boolean))]
+    : []
+  if (files.length > 0) {
+    normalized.files = files
   }
 
   const argsSummary = summarizeValue(event?.args)
@@ -102,21 +143,23 @@ function sanitizeLiveFeedEvent(filePath, event) {
 }
 
 async function appendLiveFeedEvent(config, event) {
-  if (!config.runLiveFeedFile) {
-    return
-  }
-
-  const filePath = config.runLiveFeedFile
-  const previous = liveFeedWriteQueues.get(filePath) ?? Promise.resolve()
+  const filePath = String(config.runLiveFeedFile ?? '').trim()
+  const queueKey = filePath || String(config.runTokenUsageEventsFile ?? config.tokenUsageEventsFile ?? 'token-usage')
+  const previous = liveFeedWriteQueues.get(queueKey) ?? Promise.resolve()
   const next = previous
     .catch(() => {})
     .then(async () => {
-      const sanitized = sanitizeLiveFeedEvent(filePath, event)
-      await fs.mkdir(path.dirname(filePath), { recursive: true })
-      await fs.appendFile(filePath, `${JSON.stringify(sanitized)}\n`, 'utf8')
+      const sanitized = sanitizeLiveFeedEvent(queueKey, event)
+      if (filePath !== '') {
+        await fs.mkdir(path.dirname(filePath), { recursive: true })
+        await fs.appendFile(filePath, `${JSON.stringify(sanitized)}\n`, 'utf8')
+      }
+      if (sanitized.type === 'token_usage') {
+        await appendTokenUsageEvent(config, sanitized)
+      }
     })
 
-  liveFeedWriteQueues.set(filePath, next)
+  liveFeedWriteQueues.set(queueKey, next)
   await next
 }
 
@@ -154,6 +197,11 @@ async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
     toolCalls: 0,
     toolErrors: 0,
     messageUpdates: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
     stopReason: '',
     loopDetected: false,
     loopSignature: '',
@@ -224,6 +272,11 @@ async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prom
       toolCalls: 0,
       toolErrors: 0,
       messageUpdates: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
       stopReason: '',
       loopDetected: false,
       loopSignature: '',
@@ -248,6 +301,11 @@ async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prom
     toolCalls: Number.isFinite(Number(response.toolCalls)) ? Number(response.toolCalls) : 0,
     toolErrors: Number.isFinite(Number(response.toolErrors)) ? Number(response.toolErrors) : 0,
     messageUpdates: Number.isFinite(Number(response.messageUpdates)) ? Number(response.messageUpdates) : 0,
+    inputTokens: Number.isFinite(Number(response.inputTokens)) ? Number(response.inputTokens) : 0,
+    outputTokens: Number.isFinite(Number(response.outputTokens)) ? Number(response.outputTokens) : 0,
+    totalTokens: Number.isFinite(Number(response.totalTokens)) ? Number(response.totalTokens) : 0,
+    cacheReadTokens: Number.isFinite(Number(response.cacheReadTokens)) ? Number(response.cacheReadTokens) : 0,
+    cacheWriteTokens: Number.isFinite(Number(response.cacheWriteTokens)) ? Number(response.cacheWriteTokens) : 0,
     stopReason: String(response.stopReason ?? ''),
     loopDetected: response.loopDetected === true,
     loopSignature: String(response.loopSignature ?? ''),

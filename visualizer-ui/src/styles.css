@@ -339,6 +339,76 @@ select {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.token-summary {
+  margin-top: 12px;
+}
+
+.token-coverage {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.token-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.token-section {
+  min-width: 0;
+}
+
+.token-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.token-row {
+  display: grid;
+  gap: 6px;
+}
+
+.token-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.token-row-label {
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.token-row-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.token-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.token-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #53d18d, #6ee7ff);
+  box-shadow: 0 0 18px rgba(110, 231, 255, 0.18);
+}
+
+.token-row-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .feed-toolbar {
   display: flex;
   gap: 12px;
@@ -588,6 +658,10 @@ tr[data-clickable="1"] {
   .main-grid,
   .detail-split,
   .flow {
+    grid-template-columns: 1fr;
+  }
+
+  .token-grid {
     grid-template-columns: 1fr;
   }
 

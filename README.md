@@ -269,10 +269,16 @@ Useful files during a run:
   Main run log.
 - `pi_telemetry.jsonl`
 - `pi_telemetry.csv`
+- `pi-output/token-usage/events.jsonl`
+  Normalized token-attribution event stream for downstream tools. Each row includes phase, role, kind, session/model, attribution bucket, tool/file context, and token counts.
+- `pi-output/token-usage/summary.json`
+  Derived structured token summary with totals plus breakdowns by phase, model, session, attribution, tool, file, and directory.
 - `.pi-runtime/active-run.json`
 - `.pi-runtime/runs/<runId>/...`
 
-`pi-harness report` summarizes recent telemetry and surfaces things like terminal reasons, large-file warnings, and recent failure artifacts.
+Each run also gets run-scoped token artifacts under `.pi-runtime/runs/<runId>/token-usage.events.jsonl` and `.pi-runtime/runs/<runId>/token-usage.summary.json`.
+
+`pi-harness report` summarizes recent telemetry and token artifacts and surfaces things like terminal reasons, large-file warnings, failure artifacts, and top token hotspots.
 
 `pi-harness run` now also starts lightweight local web UI for orchestration flow by default. By default it listens on `127.0.0.1:4317`. Override with `PI_VISUALIZER_HOST` and `PI_VISUALIZER_PORT`. Set `PI_VISUALIZER=0` to disable embedded web UI for a run.
 
@@ -316,6 +322,8 @@ That clears configured harness runtime/history artifacts and verifies they are g
   Agent-facing setup instructions for consuming repos.
 - [docs/PI_SUPERVISOR.md](./docs/PI_SUPERVISOR.md)
   More detailed flow, transport, telemetry, and runtime documentation.
+- [docs/TOKEN_USAGE_ARTIFACTS.md](./docs/TOKEN_USAGE_ARTIFACTS.md)
+  Agent-facing contract and usage guidance for token-usage artifacts and downstream tooling.
 - [templates/PROJECT_SETUP.md](./templates/PROJECT_SETUP.md)
   Minimal consuming-repo layout summary.
 

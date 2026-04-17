@@ -33,6 +33,8 @@ test('collectHistoryTargets includes configured harness outputs', () => {
     changedFilesFile: path.join(cwd, '.pi-changed-files.txt'),
     lastPromptFile: path.join(cwd, '.pi-last-prompt.txt'),
     lastIterationSummaryFile: path.join(cwd, '.pi-last-iteration.json'),
+    tokenUsageEventsFile: path.join(cwd, 'pi-output/token-usage/events.jsonl'),
+    tokenUsageSummaryFile: path.join(cwd, 'pi-output/token-usage/summary.json'),
     piRuntimeDir: path.join(cwd, '.pi-runtime'),
     visualFeedbackFile: path.join(cwd, 'pi-output/visual-review/FEEDBACK.md'),
     testerFeedbackFile: path.join(cwd, 'pi-output/tester-feedback/FEEDBACK.md'),
@@ -41,7 +43,7 @@ test('collectHistoryTargets includes configured harness outputs', () => {
     visualCaptureDir: path.join(cwd, 'pi-output/visual-capture'),
   }
 
-  assert.equal(collectHistoryTargets(config).length, 16)
+  assert.equal(collectHistoryTargets(config).length, 18)
 })
 
 test('clearHarnessHistory removes configured state and verifies clean slate', async () => {
@@ -58,6 +60,8 @@ test('clearHarnessHistory removes configured state and verifies clean slate', as
     changedFilesFile: path.join(cwd, '.pi-changed-files.txt'),
     lastPromptFile: path.join(cwd, '.pi-last-prompt.txt'),
     lastIterationSummaryFile: path.join(cwd, '.pi-last-iteration.json'),
+    tokenUsageEventsFile: path.join(cwd, 'pi-output/token-usage/events.jsonl'),
+    tokenUsageSummaryFile: path.join(cwd, 'pi-output/token-usage/summary.json'),
     piRuntimeDir: path.join(cwd, '.pi-runtime'),
     visualFeedbackFile: path.join(cwd, 'pi-output/visual-review/FEEDBACK.md'),
     testerFeedbackFile: path.join(cwd, 'pi-output/tester-feedback/FEEDBACK.md'),
@@ -97,6 +101,8 @@ test('clearHarnessHistory refuses to remove targets outside cwd', async () => {
     changedFilesFile: path.join(cwd, '.pi-changed-files.txt'),
     lastPromptFile: path.join(cwd, '.pi-last-prompt.txt'),
     lastIterationSummaryFile: path.join(cwd, '.pi-last-iteration.json'),
+    tokenUsageEventsFile: path.join(cwd, 'pi-output/token-usage/events.jsonl'),
+    tokenUsageSummaryFile: path.join(cwd, 'pi-output/token-usage/summary.json'),
     piRuntimeDir: path.join(cwd, '.pi-runtime'),
     visualFeedbackFile: path.join(cwd, 'pi-output/visual-review/FEEDBACK.md'),
     testerFeedbackFile: path.join(cwd, 'pi-output/tester-feedback/FEEDBACK.md'),

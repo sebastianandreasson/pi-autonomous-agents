@@ -211,3 +211,14 @@ Each step records:
 - artifact path for compact failure diagnostics when available
 - output excerpt for failed verification-style events
 - notes
+
+The harness also produces structured token-usage artifacts intended for downstream tooling:
+
+- `pi-output/token-usage/events.jsonl`
+- `pi-output/token-usage/summary.json`
+- `.pi-runtime/runs/<runId>/token-usage.events.jsonl`
+- `.pi-runtime/runs/<runId>/token-usage.summary.json`
+
+These artifacts are the stable machine-readable token contract. The visualizer and report command are consumers of those files, not the source of truth.
+
+For agent-facing guidance on how to interpret and use those files in consuming repos, see [TOKEN_USAGE_ARTIFACTS.md](./TOKEN_USAGE_ARTIFACTS.md).

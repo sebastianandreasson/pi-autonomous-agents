@@ -319,6 +319,18 @@ export function loadConfig(mode = 'once') {
       file.visualCaptureDir,
       'pi-output/visual-capture'
     ),
+    tokenUsageEventsFile: resolveFromCwd(
+      cwd,
+      'PI_TOKEN_USAGE_EVENTS_FILE',
+      file.tokenUsageEventsFile,
+      'pi-output/token-usage/events.jsonl'
+    ),
+    tokenUsageSummaryFile: resolveFromCwd(
+      cwd,
+      'PI_TOKEN_USAGE_SUMMARY_FILE',
+      file.tokenUsageSummaryFile,
+      'pi-output/token-usage/summary.json'
+    ),
     visualCaptureCommand: readString('PI_VISUAL_CAPTURE_CMD', file.visualCaptureCommand, ''),
     visualCaptureTimeoutSeconds: readInt('PI_VISUAL_CAPTURE_TIMEOUT', file.visualCaptureTimeoutSeconds, 300),
     visualReviewEnabled: readBool('PI_VISUAL_REVIEW_ENABLED', file.visualReviewEnabled, false),

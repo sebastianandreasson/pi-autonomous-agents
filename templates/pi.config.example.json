@@ -51,5 +51,7 @@
   "testerFeedbackFile": "pi-output/tester-feedback/FEEDBACK.md",
   "testerFeedbackHistoryDir": "pi-output/tester-feedback/history",
   "visualReviewHistoryDir": "pi-output/visual-review/history",
-  "visualCaptureDir": "pi-output/visual-capture"
+  "visualCaptureDir": "pi-output/visual-capture",
+  "tokenUsageEventsFile": "pi-output/token-usage/events.jsonl",
+  "tokenUsageSummaryFile": "pi-output/token-usage/summary.json"
 }

@@ -67,6 +67,12 @@ Important:
   - mention project-specific constraints, startup flow, or directories
   - keep the harness workflow intact
 
+Recommended:
+
+- If the repo wants agents to learn from harness token data, also reference:
+  - `node_modules/@sebastianandreasson/pi-autonomous-agents/docs/TOKEN_USAGE_ARTIFACTS.md`
+- Add a short repo-local instruction snippet telling agents to read `pi-output/token-usage/summary.json` before investigating retries, hotspots, or large turns.
+
 4. Ensure `TODOS.md` exists.
 
 - If the repo already uses a task file, keep it.
@@ -191,6 +197,7 @@ The harness should fail fast if:
 
 For prompt debugging, inspect `.pi-last-prompt.txt` after a run. It contains the exact assembled prompt that was sent for the active role.
 For flow debugging, inspect `.pi-last-iteration.json` after a run. It summarizes the selected task, repo-change outcome, tester verdict, commit-plan state, and terminal reason.
+For token-hotspot debugging, inspect `pi-output/token-usage/summary.json` first and only read `pi-output/token-usage/events.jsonl` when the summary is not enough.
 
 ## Agent Rules
 

@@ -7,6 +7,12 @@ import {
   getHeartbeatDecision,
   resolveHeartbeatConfig,
 } from './pi-heartbeat.mjs'
+import {
+  createEmptyTokenUsage,
+  formatTokenUsageSummary,
+  normalizeStringList,
+  normalizeTokenUsage,
+} from './pi-token-analysis.mjs'
 
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh'])
 
@@ -97,6 +103,33 @@ function getLastAssistantMessage(messages) {
 
   const reversed = [...messages].reverse()
   return reversed.find((message) => message?.role === 'assistant') ?? null
+}
+
+function addTokenUsage(total, value) {
+  const next = normalizeTokenUsage(value)
+  return {
+    inputTokens: total.inputTokens + next.inputTokens,
+    outputTokens: total.outputTokens + next.outputTokens,
+    totalTokens: total.totalTokens + next.totalTokens,
+    cacheReadTokens: total.cacheReadTokens + next.cacheReadTokens,
+    cacheWriteTokens: total.cacheWriteTokens + next.cacheWriteTokens,
+  }
+}
+
+function deriveTokenAttributionKind({ activeToolName, pendingToolNames, pendingFiles, lastAssistantActivity }) {
+  if (String(activeToolName ?? '').trim() !== '') {
+    return 'tool_running'
+  }
+  if (pendingToolNames.size > 0 || pendingFiles.size > 0) {
+    return 'tool_context'
+  }
+  if (lastAssistantActivity === 'thinking') {
+    return 'thinking'
+  }
+  if (lastAssistantActivity === 'response') {
+    return 'response'
+  }
+  return 'agent'
 }
 
 export function splitModelSpec(modelSpec) {
@@ -362,6 +395,11 @@ export async function runSdkTurnWithPi(pi, request) {
   let activeToolName = ''
   let activeToolStartedAt = 0
   let lastEventAt = Date.now()
+  let tokenUsageEvents = 0
+  let tokenUsage = createEmptyTokenUsage()
+  let lastAssistantActivity = ''
+  const pendingToolNames = new Set()
+  const pendingFiles = new Set()
   const events = []
 
   const writeLive = (text) => {
@@ -454,6 +492,7 @@ export async function runSdkTurnWithPi(pi, request) {
       }
 
       if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'thinking_delta') {
+        lastAssistantActivity = 'thinking'
         emitLiveFeed(request, {
           type: 'thinking_delta',
           text: event.assistantMessageEvent.delta,
@@ -461,6 +500,7 @@ export async function runSdkTurnWithPi(pi, request) {
       }
 
       if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
+        lastAssistantActivity = 'response'
         emitLiveFeed(request, {
           type: 'text_delta',
           text: event.assistantMessageEvent.delta,
@@ -480,6 +520,36 @@ export async function runSdkTurnWithPi(pi, request) {
         streamedAssistantText = false
       }
 
+      if (event.type === 'token_usage') {
+        tokenUsageEvents += 1
+        tokenUsage = addTokenUsage(tokenUsage, event)
+        const toolNames = normalizeStringList([...pendingToolNames])
+        const files = normalizeStringList([...pendingFiles])
+        const attributionKind = deriveTokenAttributionKind({
+          activeToolName,
+          pendingToolNames,
+          pendingFiles,
+          lastAssistantActivity,
+        })
+        emitLiveFeed(request, {
+          type: 'token_usage',
+          text: [
+            formatTokenUsageSummary(event),
+            attributionKind !== 'agent' ? `attribution=${attributionKind}` : '',
+            files.length > 0 ? `files=${files.slice(0, 3).join(',')}${files.length > 3 ? ',…' : ''}` : '',
+          ].filter(Boolean).join(' '),
+          ...normalizeTokenUsage(event),
+          attributionKind,
+          toolNames,
+          files,
+          primaryFile: files[0] ?? '',
+          sessionId: String(session?.sessionId ?? ''),
+          model: requestedModel,
+        })
+        pendingToolNames.clear()
+        pendingFiles.clear()
+      }
+
       if (event.type === 'tool_execution_start') {
         closeAssistantLine()
         const argsText = formatValue(event.args)
@@ -489,6 +559,12 @@ export async function runSdkTurnWithPi(pi, request) {
         activeToolStartedAt = Date.now()
         const target = extractToolTarget(event.toolName, event.args)
         const shellCommand = event.toolName === 'bash' ? extractShellCommand(event.args) : ''
+        if (activeToolName !== '') {
+          pendingToolNames.add(activeToolName)
+        }
+        if (target !== '') {
+          pendingFiles.add(target)
+        }
 
         if (signature === lastToolSignature) {
           repeatedToolCount += 1
@@ -542,6 +618,9 @@ export async function runSdkTurnWithPi(pi, request) {
 
       if (event.type === 'tool_execution_end') {
         closeAssistantLine()
+        if (activeToolName !== '') {
+          pendingToolNames.add(activeToolName)
+        }
         activeToolName = ''
         activeToolStartedAt = 0
         emitLiveFeed(request, {
@@ -604,6 +683,7 @@ export async function runSdkTurnWithPi(pi, request) {
       const toolCalls = events.filter((event) => event.type === 'tool_execution_start').length
       const toolErrors = events.filter((event) => event.type === 'tool_execution_end' && event.isError).length
       const messageUpdates = events.filter((event) => event.type === 'message_update').length
+      const tokenSummary = formatTokenUsageSummary(tokenUsage)
       return {
         sessionId: session.sessionId ?? request.sessionId ?? '',
         sessionFile: session.sessionFile ?? request.sessionFile ?? '',
@@ -620,6 +700,7 @@ export async function runSdkTurnWithPi(pi, request) {
         ].join('\n').trim(),
         notes: [
           heartbeatReason,
+          tokenSummary,
           continueAttempted ? `continue_attempted=${continueMessage}` : '',
           continueAccepted ? 'continue_accepted=true' : '',
           continueRejected ? 'continue_rejected=true' : '',
@@ -629,6 +710,7 @@ export async function runSdkTurnWithPi(pi, request) {
         toolCalls,
         toolErrors,
         messageUpdates,
+        ...tokenUsage,
         stopReason: '',
         loopDetected: false,
         loopSignature: '',
@@ -640,9 +722,13 @@ export async function runSdkTurnWithPi(pi, request) {
     const toolErrors = events.filter((event) => event.type === 'tool_execution_end' && event.isError).length
     const messageUpdates = events.filter((event) => event.type === 'message_update').length
     const lastAssistantMessage = getLastAssistantMessage(session.messages)
+    if (tokenUsageEvents === 0) {
+      tokenUsage = addTokenUsage(tokenUsage, lastAssistantMessage?.usage)
+    }
     const assistantText = extractAssistantText(lastAssistantMessage).trim()
     const assistantError = String(lastAssistantMessage?.errorMessage ?? '').trim()
     const assistantStopReason = String(lastAssistantMessage?.stopReason ?? '').trim()
+    const tokenSummary = formatTokenUsageSummary(tokenUsage)
     const status = loopDetected
       ? 'stalled'
       : assistantError !== '' || (assistantText === '' && toolCalls === 0 && messageUpdates === 0)
@@ -662,6 +748,7 @@ export async function runSdkTurnWithPi(pi, request) {
       `tool_calls=${toolCalls}`,
       `tool_errors=${toolErrors}`,
       `message_updates=${messageUpdates}`,
+      tokenSummary,
       activeToolName !== '' ? `active_tool=${activeToolName}` : '',
       continueAttempted ? `continue_attempted=${continueMessage}` : '',
       continueAccepted ? 'continue_accepted=true' : '',
@@ -689,6 +776,7 @@ export async function runSdkTurnWithPi(pi, request) {
       toolCalls,
       toolErrors,
       messageUpdates,
+      ...tokenUsage,
       stopReason: assistantStopReason,
       loopDetected,
       loopSignature,

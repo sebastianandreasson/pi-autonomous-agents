@@ -21,7 +21,10 @@ Minimal install pattern:
 5. Add the `gitignore.fragment` entries to your repo `.gitignore`
 6. Create a fast verification command for `testCommand`
 7. Optionally create a screenshot capture flow for `visualCaptureCommand`
-8. Run:
+8. Optionally teach repo-local agents to use token artifacts:
+   - point them at `docs/TOKEN_USAGE_ARTIFACTS.md` from this package
+   - tell them to read `pi-output/token-usage/summary.json` before diagnosing retries, hotspots, or oversized turns
+9. Run:
 
 ```bash
 PI_CONFIG_FILE=pi.config.json pi-harness once

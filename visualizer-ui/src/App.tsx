@@ -4,6 +4,7 @@ import { DiagnosticsPanel } from './components/DiagnosticsPanel'
 import { FlowStrip } from './components/FlowStrip'
 import { LiveFeed } from './components/LiveFeed'
 import { StepDetails } from './components/StepDetails'
+import { TokenHeatmap } from './components/TokenHeatmap'
 import { TodoList } from './components/TodoList'
 import { getSelectedTodo, useVisualizerStore } from './store'
 import type { TelemetryEvent } from './types'
@@ -141,6 +142,7 @@ export default function App() {
                   <div className="label">Current edits for focused todo</div>
                   <CurrentEdits edits={snapshot.currentEdits} />
                 </div>
+                <TokenHeatmap breakdown={snapshot.tokenBreakdown} />
               </div>
             </div>
           </div>

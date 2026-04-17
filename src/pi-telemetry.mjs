@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { ensureTokenUsageFiles } from './pi-token-analysis.mjs'
 
-const CSV_HEADER = 'timestamp,run_id,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,role,model,tool_calls,tool_errors,message_updates,stop_reason,loop_detected,loop_signature,tester_verdict,commit_plan_found,terminal_reason,risk_warnings,artifact_path,output_excerpt,notes\n'
+const CSV_HEADER = 'timestamp,run_id,iteration,phase,kind,status,transport,session_id,timed_out,exit_code,duration_seconds,commit_before,commit_after,repo_changed,changed_files_count,verification_status,retry_count,role,model,input_tokens,output_tokens,total_tokens,cache_read_tokens,cache_write_tokens,tool_calls,tool_errors,message_updates,stop_reason,loop_detected,loop_signature,tester_verdict,commit_plan_found,terminal_reason,risk_warnings,artifact_path,output_excerpt,notes\n'
 const DEFAULT_JSONL_TAIL_BYTES = 512 * 1024
 const JSONL_TAIL_CHUNK_BYTES = 64 * 1024
 
@@ -52,6 +53,8 @@ export async function ensureTelemetryFiles(config) {
       await fs.writeFile(config.runTelemetryCsv, CSV_HEADER, 'utf8')
     }
   }
+
+  await ensureTokenUsageFiles(config)
 }
 
 export async function appendTelemetry(config, event) {
@@ -81,6 +84,11 @@ export async function appendTelemetry(config, event) {
     event.retryCount,
     event.role,
     event.model,
+    event.inputTokens,
+    event.outputTokens,
+    event.totalTokens,
+    event.cacheReadTokens,
+    event.cacheWriteTokens,
     event.toolCalls,
     event.toolErrors,
     event.messageUpdates,

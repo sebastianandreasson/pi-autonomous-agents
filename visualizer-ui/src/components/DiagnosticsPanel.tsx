@@ -87,6 +87,7 @@ export function DiagnosticsPanel({
                   <th>Iteration</th>
                   <th>Kind</th>
                   <th>Status</th>
+                  <th>Tokens</th>
                   <th>Notes</th>
                 </tr>
               </thead>
@@ -97,9 +98,10 @@ export function DiagnosticsPanel({
                     <td>{event.iteration ?? '—'}</td>
                     <td>{event.kind ?? '—'}</td>
                     <td><span className={`status-pill ${eventStatus(event.status)}`}>{event.status || '—'}</span></td>
+                    <td>{Number.isFinite(event.totalTokens) ? event.totalTokens : '—'}</td>
                     <td className="muted">{event.notes || ''}</td>
                   </tr>
-                )) : <tr><td colSpan={5} className="muted">No telemetry yet.</td></tr>}
+                )) : <tr><td colSpan={6} className="muted">No telemetry yet.</td></tr>}
               </tbody>
             </table>
           </div>

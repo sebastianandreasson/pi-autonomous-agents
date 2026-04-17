@@ -226,6 +226,14 @@ test('runSdkTurnWithPi returns successful structured result', async () => {
         type: 'message_update',
         assistantMessageEvent: { type: 'text_delta', delta: 'done' },
       })
+      session.emit({
+        type: 'token_usage',
+        inputTokens: 120,
+        outputTokens: 45,
+        totalTokens: 165,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 0,
+      })
       const message = {
         role: 'assistant',
         content: [{ type: 'text', text: 'done' }],
@@ -251,7 +259,13 @@ test('runSdkTurnWithPi returns successful structured result', async () => {
   assert.equal(result.toolCalls, 1)
   assert.equal(result.toolErrors, 0)
   assert.equal(result.messageUpdates, 1)
+  assert.equal(result.inputTokens, 120)
+  assert.equal(result.outputTokens, 45)
+  assert.equal(result.totalTokens, 165)
+  assert.equal(result.cacheReadTokens, 10)
+  assert.equal(result.cacheWriteTokens, 0)
   assert.equal(result.terminalReason, 'agent_completed')
+  assert.match(result.notes, /tokens_total=165/)
   assert.match(result.notes, /PI session sdk-session-1/)
   assert.deepEqual(pi._getAppliedOverrides(), { retry: { enabled: false } })
   assert.equal(pi._session._disposed, true)
@@ -298,4 +312,46 @@ test('runSdkTurnWithPi marks repeated tool churn as stalled and aborts session',
   assert.equal(result.loopDetected, true)
   assert.equal(result.loopSignature, 'read {"path":"src/file.js"}')
   assert.equal(pi._session._aborts, 1)
+})
+
+test('runSdkTurnWithPi falls back to assistant message usage when token_usage events are absent', async () => {
+  const pi = createFakePi({
+    promptImpl: async (session) => {
+      session.emit({ type: 'agent_start' })
+      session.emit({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: 'done' },
+      })
+      const message = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'stop',
+        usage: {
+          inputTokens: 77,
+          outputTokens: 23,
+          totalTokens: 100,
+          cacheReadTokens: 5,
+          cacheWriteTokens: 0,
+        },
+      }
+      session.messages.push(message)
+      session.emit({ type: 'message_end', message })
+      session.emit({ type: 'agent_end' })
+    },
+  })
+
+  const result = await runSdkTurnWithPi(pi, {
+    cwd: '/repo',
+    runtimeDir: '/repo/.pi-runtime/run-1',
+    prompt: 'do work',
+    model: 'local/dev-model',
+    tools: 'read',
+    noThemes: true,
+  })
+
+  assert.equal(result.inputTokens, 77)
+  assert.equal(result.outputTokens, 23)
+  assert.equal(result.totalTokens, 100)
+  assert.equal(result.cacheReadTokens, 5)
+  assert.equal(result.cacheWriteTokens, 0)
 })
