@@ -137,3 +137,28 @@ test('readTokenUsageSummary falls back to empty structured payload', async () =>
   })
   assert.match(summary.generatedAt, /^\d{4}-\d{2}-\d{2}T/)
 })
+
+test('turn_fallback events stay coarse and do not fabricate file or tool hotspots', () => {
+  const breakdown = deriveTokenBreakdown({
+    events: [
+      {
+        timestamp: '2026-04-17T12:00:00.000Z',
+        kind: 'main_agent',
+        role: 'developer',
+        phase: 'Phase 1',
+        model: 'local/dev',
+        sessionId: 'session-1',
+        attributionKind: 'turn_fallback',
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+      },
+    ],
+  })
+
+  assert.equal(breakdown.totals.totalTokens, 140)
+  assert.equal(breakdown.breakdowns.byAttribution[0].key, 'turn_fallback')
+  assert.deepEqual(breakdown.breakdowns.byTool, [])
+  assert.deepEqual(breakdown.breakdowns.byFile, [])
+  assert.equal(breakdown.coverage.fileAttributedTokens, 0)
+})

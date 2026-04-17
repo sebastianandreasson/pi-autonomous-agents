@@ -233,6 +233,7 @@ async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prom
       tools: config.piTools,
       thinking: config.piThinking,
       noExtensions: config.piNoExtensions,
+      requestTelemetryEnabled: config.piRequestTelemetryEnabled,
       noSkills: config.piNoSkills,
       noPromptTemplates: config.piNoPromptTemplates,
       noThemes: config.piNoThemes,

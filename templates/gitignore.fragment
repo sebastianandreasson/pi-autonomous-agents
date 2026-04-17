@@ -1,5 +1,6 @@
 # PI harness artifacts
 .pi-runtime/
+.pi/extensions/pi-harness-request-telemetry/
 .pi-state.json
 .pi-session-id
 .pi-last-output.txt

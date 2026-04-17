@@ -13,6 +13,7 @@ import {
   normalizeStringList,
   normalizeTokenUsage,
 } from './pi-token-analysis.mjs'
+import { ensureBundledRequestTelemetryExtension } from './pi-request-telemetry.mjs'
 
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh'])
 
@@ -141,18 +142,20 @@ function emitTokenUsageAttribution({
   pendingToolNames,
   pendingFiles,
   lastAssistantActivity,
+  includeContext = true,
+  forcedAttributionKind = '',
 }) {
   const usage = normalizeTokenUsage(tokenUsage)
   if (usage.totalTokens <= 0 && usage.inputTokens <= 0 && usage.outputTokens <= 0) {
     return
   }
 
-  const toolNames = normalizeStringList([...pendingToolNames])
-  const files = normalizeStringList([...pendingFiles])
-  const attributionKind = deriveTokenAttributionKind({
-    activeToolName,
-    pendingToolNames,
-    pendingFiles,
+  const toolNames = includeContext ? normalizeStringList([...pendingToolNames]) : []
+  const files = includeContext ? normalizeStringList([...pendingFiles]) : []
+  const attributionKind = forcedAttributionKind || deriveTokenAttributionKind({
+    activeToolName: includeContext ? activeToolName : '',
+    pendingToolNames: includeContext ? pendingToolNames : new Set(),
+    pendingFiles: includeContext ? pendingFiles : new Set(),
     lastAssistantActivity,
   })
 
@@ -345,6 +348,10 @@ export async function createSdkSession(pi, request) {
 
   const { thinkingLevel: modelSpecThinking } = splitModelSpec(request.model)
   const thinkingLevel = String(request.thinking || modelSpecThinking || '').trim()
+  await ensureBundledRequestTelemetryExtension({
+    cwd: request.cwd,
+    enabled: request.noExtensions !== true && request.requestTelemetryEnabled !== false,
+  })
   const resourceLoader = new pi.DefaultResourceLoader({
     cwd: request.cwd,
     agentDir,
@@ -762,6 +769,8 @@ export async function runSdkTurnWithPi(pi, request) {
         pendingToolNames,
         pendingFiles,
         lastAssistantActivity,
+        includeContext: false,
+        forcedAttributionKind: 'turn_fallback',
       })
       pendingToolNames.clear()
       pendingFiles.clear()

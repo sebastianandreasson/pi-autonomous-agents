@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { readJsonlTail, readTelemetryTail } from './pi-telemetry.mjs'
 import { readJsonFile } from './pi-repo.mjs'
 import { readTokenUsageSummary } from './pi-token-analysis.mjs'
+import { readRequestTelemetryBreakdown } from './pi-request-telemetry.mjs'
 import { deriveFlowSnapshot, deriveStageGraph, formatActiveLabel } from './pi-visualizer-shared.mjs'
 
 export function readVisualizerHost() {
@@ -274,19 +275,28 @@ function resolveSelectedRunId(queryRunId, activeRun, runs) {
   return runs[0]?.runId ?? ''
 }
 
+function extractSessionId(...values) {
+  for (const value of values) {
+    const sessionId = String(value?.sessionId ?? '').trim()
+    if (sessionId !== '') {
+      return sessionId
+    }
+  }
+  return ''
+}
+
 export async function buildSnapshot(config, queryRunId = '') {
   const activeRun = await readJsonFile(config.activeRunFile, null)
   const runs = await listRuns(config, activeRun)
   const selectedRunId = resolveSelectedRunId(queryRunId, activeRun, runs)
   const selectedConfig = selectedRunId !== '' ? getRunScopedConfig(config, selectedRunId) : config
 
-  const [state, summary, telemetry, currentOutput, liveFeed, tokenBreakdown] = await Promise.all([
+  const [state, summary, telemetry, currentOutput, liveFeed] = await Promise.all([
     readJsonFile(selectedConfig.stateFile, null),
     readJsonFile(selectedConfig.lastIterationSummaryFile, null),
     readTelemetryTail(selectedConfig, 160, 512 * 1024),
     readOptionalText(selectedConfig.lastAgentOutputFile, 5000),
     readJsonlTail(selectedConfig.liveFeedFile, { maxItems: 300, maxBytes: 768 * 1024 }),
-    readTokenUsageSummary(selectedConfig),
   ])
 
   const flowOptions = {
@@ -312,6 +322,15 @@ export async function buildSnapshot(config, queryRunId = '') {
   })
 
   const selectedRunIsActive = selectedRunId !== '' && String(activeRun?.runId ?? '') === selectedRunId
+  const selectedRunState = selectedRunIsActive ? activeRun : state?.inProgress ?? null
+  const sessionId = extractSessionId(selectedRunState, state, summary)
+  const requestTelemetryBreakdown = await readRequestTelemetryBreakdown({
+    cwd: config.cwd,
+    sessionId,
+  })
+  const tokenBreakdown = Number(requestTelemetryBreakdown?.source?.requestCount ?? 0) > 0
+    ? requestTelemetryBreakdown
+    : await readTokenUsageSummary(selectedConfig)
   const activeTaskText = String((selectedRunIsActive ? activeRun?.task : state?.inProgress?.task) ?? summary?.task ?? '').trim()
   const [todos, currentEdits] = await Promise.all([
     parseTodos(config.taskFile, activeTaskText),

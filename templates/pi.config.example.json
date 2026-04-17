@@ -8,6 +8,7 @@
   "largeFileWarningLines": 500,
   "largeSpecWarningLines": 300,
   "piModel": "local/text-model",
+  "piRequestTelemetryEnabled": true,
   "models": {
     "local/text-model": {
       "baseUrl": "http://localhost:8000/v1",

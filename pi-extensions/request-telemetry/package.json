@@ -1,0 +1,10 @@
+{
+  "name": "@sebastianandreasson/pi-request-telemetry-extension",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.mjs"
+    ]
+  }
+}

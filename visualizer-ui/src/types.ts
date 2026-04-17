@@ -132,7 +132,11 @@ export type TokenBreakdown = {
   schemaVersion?: number
   generatedAt?: string
   source: {
+    mode?: string
     eventCount: number
+    requestCount?: number
+    spanCount?: number
+    sessionId?: string
   }
   totals: {
     inputTokens: number

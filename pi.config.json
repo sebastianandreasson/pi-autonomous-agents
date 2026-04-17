@@ -12,6 +12,7 @@
   "noEventTimeoutSeconds": 900,
   "toolNoEventTimeoutSeconds": 1800,
   "testCommand": "",
+  "piRequestTelemetryEnabled": true,
   "visualFeedbackFile": "pi-output/visual-review/FEEDBACK.md",
   "testerFeedbackFile": "pi-output/tester-feedback/FEEDBACK.md",
   "testerFeedbackHistoryDir": "pi-output/tester-feedback/history",

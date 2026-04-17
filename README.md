@@ -80,6 +80,8 @@ Typical scripts:
 
 Start from [templates/pi.config.example.json](./templates/pi.config.example.json), [templates/DEVELOPER.md](./templates/DEVELOPER.md), [templates/TESTER.md](./templates/TESTER.md), and [templates/gitignore.fragment](./templates/gitignore.fragment).
 
+Request telemetry is enabled by default for SDK runs. `pi-harness` writes a managed Pi extension shim to `.pi/extensions/pi-harness-request-telemetry/index.mjs` in the consuming repo, and Pi auto-discovers it on the next resource reload. Disable that with `PI_REQUEST_TELEMETRY_ENABLED=0` or `"piRequestTelemetryEnabled": false`.
+
 ## CLI
 
 ```bash
@@ -183,6 +185,7 @@ Common fields in `pi.config.json`:
 - `testerInstructionsFile`
 - `transport` (`sdk` or `mock`)
 - `piModel`
+- `piRequestTelemetryEnabled`
 - `models`
 - `roleModels`
 - `commitMode`
@@ -324,6 +327,8 @@ That clears configured harness runtime/history artifacts and verifies they are g
   More detailed flow, transport, telemetry, and runtime documentation.
 - [docs/TOKEN_USAGE_ARTIFACTS.md](./docs/TOKEN_USAGE_ARTIFACTS.md)
   Agent-facing contract and usage guidance for token-usage artifacts and downstream tooling.
+- [docs/PI_REQUEST_TELEMETRY_EXTENSION.md](./docs/PI_REQUEST_TELEMETRY_EXTENSION.md)
+  Repo-local Pi extension prototype for request-level telemetry via Pi hooks.
 - [templates/PROJECT_SETUP.md](./templates/PROJECT_SETUP.md)
   Minimal consuming-repo layout summary.
 

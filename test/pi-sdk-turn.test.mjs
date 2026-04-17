@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
+  createSdkSession,
   createTools,
   normalizeToolNames,
   resolveModel,
@@ -158,6 +162,10 @@ function createFakePi({
   }
 }
 
+async function makeTempDir() {
+  return await fs.mkdtemp(path.join(os.tmpdir(), 'pi-sdk-turn-'))
+}
+
 test('splitModelSpec extracts optional thinking suffix', () => {
   assert.deepEqual(splitModelSpec('openai/gpt-4o:high'), {
     modelName: 'openai/gpt-4o',
@@ -208,6 +216,42 @@ test('resolveModel finds provider-prefixed and ambiguous shorthand models', asyn
   await assert.rejects(() => resolveModel(registry, 'dev-model'), /ambiguous/)
 })
 
+test('createSdkSession auto-installs managed request telemetry extension by default', async () => {
+  const pi = createFakePi()
+  const cwd = await makeTempDir()
+
+  await createSdkSession(pi, {
+    cwd,
+    runtimeDir: path.join(cwd, '.pi-runtime'),
+    model: 'local/dev-model',
+    tools: 'read',
+    noThemes: true,
+  })
+
+  const shimFile = path.join(cwd, '.pi', 'extensions', 'pi-harness-request-telemetry', 'index.mjs')
+  const shim = await fs.readFile(shimFile, 'utf8')
+  assert.match(shim, /request telemetry extension/i)
+})
+
+test('createSdkSession removes managed request telemetry extension when disabled', async () => {
+  const pi = createFakePi()
+  const cwd = await makeTempDir()
+  const shimDir = path.join(cwd, '.pi', 'extensions', 'pi-harness-request-telemetry')
+  await fs.mkdir(shimDir, { recursive: true })
+  await fs.writeFile(path.join(shimDir, 'index.mjs'), 'stale\n', 'utf8')
+
+  await createSdkSession(pi, {
+    cwd,
+    runtimeDir: path.join(cwd, '.pi-runtime'),
+    model: 'local/dev-model',
+    tools: 'read',
+    requestTelemetryEnabled: false,
+    noThemes: true,
+  })
+
+  await assert.rejects(() => fs.access(shimDir))
+})
+
 test('runSdkTurnWithPi returns successful structured result', async () => {
   const pi = createFakePi({
     promptImpl: async (session) => {
@@ -251,6 +295,7 @@ test('runSdkTurnWithPi returns successful structured result', async () => {
     prompt: 'do work',
     model: 'local/dev-model:off',
     tools: 'read,bash',
+    requestTelemetryEnabled: false,
     noThemes: true,
   })
 
@@ -302,6 +347,7 @@ test('runSdkTurnWithPi marks repeated tool churn as stalled and aborts session',
     prompt: 'do work',
     model: 'local/dev-model',
     tools: 'read',
+    requestTelemetryEnabled: false,
     loopRepeatThreshold: 2,
     samePathRepeatThreshold: 2,
     noThemes: true,
@@ -347,6 +393,7 @@ test('runSdkTurnWithPi falls back to assistant message usage when token_usage ev
     prompt: 'do work',
     model: 'local/dev-model',
     tools: 'read',
+    requestTelemetryEnabled: false,
     noThemes: true,
     onLiveEvent(event) {
       liveEvents.push(event)
@@ -360,4 +407,7 @@ test('runSdkTurnWithPi falls back to assistant message usage when token_usage ev
   assert.equal(result.cacheWriteTokens, 0)
   assert.equal(liveEvents.filter((event) => event.type === 'token_usage').length, 1)
   assert.equal(liveEvents.find((event) => event.type === 'token_usage')?.totalTokens, 100)
+  assert.equal(liveEvents.find((event) => event.type === 'token_usage')?.attributionKind, 'turn_fallback')
+  assert.deepEqual(liveEvents.find((event) => event.type === 'token_usage')?.toolNames ?? [], [])
+  assert.deepEqual(liveEvents.find((event) => event.type === 'token_usage')?.files ?? [], [])
 })

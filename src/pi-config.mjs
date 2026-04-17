@@ -265,6 +265,7 @@ export function loadConfig(mode = 'once') {
     piTools: readString('PI_TOOLS', file.piTools, 'read,edit,write,find,ls,bash'),
     piThinking: readString('PI_THINKING', file.piThinking, ''),
     piNoExtensions: readBool('PI_NO_EXTENSIONS', file.piNoExtensions, false),
+    piRequestTelemetryEnabled: readBool('PI_REQUEST_TELEMETRY_ENABLED', file.piRequestTelemetryEnabled, true),
     piNoSkills: readBool('PI_NO_SKILLS', file.piNoSkills, false),
     piNoPromptTemplates: readBool('PI_NO_PROMPT_TEMPLATES', file.piNoPromptTemplates, false),
     piNoThemes: readBool('PI_NO_THEMES', file.piNoThemes, true),

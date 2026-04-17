@@ -65,6 +65,19 @@ export function TokenHeatmap({ breakdown }: TokenHeatmapProps) {
   const totals = breakdown?.totals
   const coverage = breakdown?.coverage
   const buckets = breakdown?.breakdowns
+  const mode = String(breakdown?.source?.mode || 'token_usage')
+  const usingRequestTelemetry = mode === 'request_telemetry'
+  const eventCountLabel = usingRequestTelemetry ? 'Requests' : 'Token events'
+  const eventCountValue = usingRequestTelemetry
+    ? breakdown?.source?.requestCount
+    : breakdown?.source?.eventCount
+  const coverageLabel = usingRequestTelemetry ? 'Input coverage' : 'File coverage'
+  const attributionTitle = usingRequestTelemetry ? 'By request source' : 'By attribution'
+  const phaseTitle = usingRequestTelemetry ? 'By model' : 'By supervisor phase'
+  const phaseItems = usingRequestTelemetry ? (buckets?.byModel || []) : (buckets?.byKind || [])
+  const coverageText = usingRequestTelemetry
+    ? `Exact request totals from Pi message usage. File/tool buckets estimated from exact prompt spans using proportional input-context share. Input-linked file coverage: ${formatTokenCount(coverage?.fileAttributedTokens)} attributed vs ${formatTokenCount(coverage?.unattributedTokens)} unattributed.`
+    : `Attributed from live token events near tool/file context. File-attributed tokens: ${formatTokenCount(coverage?.fileAttributedTokens)}. Unattributed tokens: ${formatTokenCount(coverage?.unattributedTokens)}.`
 
   return (
     <div className="card">
@@ -73,15 +86,13 @@ export function TokenHeatmap({ breakdown }: TokenHeatmapProps) {
         <div className="state-chip">Total: {formatTokenCount(totals?.totalTokens)}</div>
         <div className="state-chip">Input: {formatTokenCount(totals?.inputTokens)}</div>
         <div className="state-chip">Output: {formatTokenCount(totals?.outputTokens)}</div>
-        <div className="state-chip">Token events: {formatTokenCount(breakdown?.source?.eventCount)}</div>
-        <div className="state-chip">File coverage: {formatPercent(coverage?.fileAttributionRatio)}</div>
+        <div className="state-chip">{eventCountLabel}: {formatTokenCount(eventCountValue)}</div>
+        <div className="state-chip">{coverageLabel}: {formatPercent(coverage?.fileAttributionRatio)}</div>
       </div>
-      <div className="token-coverage">
-        Attributed from live token events near tool/file context. File-attributed tokens: {formatTokenCount(coverage?.fileAttributedTokens)}. Unattributed tokens: {formatTokenCount(coverage?.unattributedTokens)}.
-      </div>
+      <div className="token-coverage">{coverageText}</div>
       <div className="token-grid">
-        <HeatList title="By attribution" items={buckets?.byAttribution || []} emptyLabel="No token attribution yet." maxItems={6} />
-        <HeatList title="By supervisor phase" items={buckets?.byKind || []} emptyLabel="No phase token data yet." maxItems={8} />
+        <HeatList title={attributionTitle} items={buckets?.byAttribution || []} emptyLabel="No token attribution yet." maxItems={6} />
+        <HeatList title={phaseTitle} items={phaseItems} emptyLabel="No phase token data yet." maxItems={8} />
         <HeatList title="By tool" items={buckets?.byTool || []} emptyLabel="No tool-linked token data yet." maxItems={8} />
         <HeatList title="Top files" items={buckets?.byFile || []} emptyLabel="No file-linked token data yet." maxItems={10} />
         <HeatList title="Top directories" items={buckets?.byDirectory || []} emptyLabel="No directory-linked token data yet." maxItems={10} />
