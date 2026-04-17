@@ -1,10 +1,10 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CurrentEdits } from './components/CurrentEdits'
 import { DiagnosticsPanel } from './components/DiagnosticsPanel'
 import { FlowStrip } from './components/FlowStrip'
 import { LiveFeed } from './components/LiveFeed'
 import { StepDetails } from './components/StepDetails'
-import { TokenHeatmap } from './components/TokenHeatmap'
+import { TokenAnalyticsView } from './components/TokenAnalyticsView'
 import { TodoList } from './components/TodoList'
 import { getSelectedTodo, useVisualizerStore } from './store'
 import type { TelemetryEvent } from './types'
@@ -20,6 +20,7 @@ function findSelectedEvent(snapshot: ReturnType<typeof useVisualizerStore.getSta
 }
 
 export default function App() {
+  const [tab, setTab] = useState<'overview' | 'diagnostics' | 'tokens'>('overview')
   const snapshot = useVisualizerStore((state) => state.snapshot)
   const selectedRunId = useVisualizerStore((state) => state.selectedRunId)
   const selectedTodoId = useVisualizerStore((state) => state.selectedTodoId)
@@ -72,11 +73,29 @@ export default function App() {
   ]
 
   return (
-    <div className="wrap">
+    <div className={`wrap ${tab === 'tokens' ? 'wide' : ''}`}>
       <div className="header">
         <div>
           <div className="title">PI Harness Visualizer</div>
           <div className="subtitle">{snapshot.config.cwd}</div>
+          <div className="tab-strip">
+            {[
+              ['overview', 'Overview'],
+              ['diagnostics', 'Diagnostics'],
+              ['tokens', 'Tokens'],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={`tab-chip ${tab === key ? 'active' : ''}`}
+                onClick={() => {
+                  setTab(key as 'overview' | 'diagnostics' | 'tokens')
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="toolbar">
           <select
@@ -101,17 +120,17 @@ export default function App() {
         </div>
       </div>
 
-      <div className="grid main-grid">
-        <div className="card">
-          <div className="label">TODOS · {completedTodos}/{totalTodos} done</div>
-          <TodoList
-            todos={snapshot.todos}
-            selectedTodoId={selectedTodo?.id || null}
-            onSelect={setSelectedTodoId}
-          />
-        </div>
+      {tab === 'overview' ? (
+        <div className="grid main-grid">
+          <div className="card">
+            <div className="label">TODOS · {completedTodos}/{totalTodos} done</div>
+            <TodoList
+              todos={snapshot.todos}
+              selectedTodoId={selectedTodo?.id || null}
+              onSelect={setSelectedTodoId}
+            />
+          </div>
 
-        <div>
           <div className="card">
             <div className="label">Focused todo</div>
             <div className="value small">{selectedTodo?.text || 'No todo selected.'}</div>
@@ -137,30 +156,36 @@ export default function App() {
                   onCollapseDeltasChange={setCollapseDeltas}
                 />
               </div>
-              <div className="grid side-grid">
-                <div className="card card-tight no-margin">
-                  <div className="label">Current edits for focused todo</div>
-                  <CurrentEdits edits={snapshot.currentEdits} />
-                </div>
-                <TokenHeatmap breakdown={snapshot.tokenBreakdown} />
+              <div className="card card-tight no-margin">
+                <div className="label">Current edits for focused todo</div>
+                <CurrentEdits edits={snapshot.currentEdits} />
               </div>
             </div>
           </div>
-
-          <DiagnosticsPanel
-            activeRun={snapshot.activeRun}
-            state={snapshot.state}
-            transport={snapshot.config.transport}
-            selectedRunId={snapshot.config.selectedRunId}
-            summary={snapshot.summary}
-            output={snapshot.lastOutput}
-            graph={snapshot.graph.nodes}
-            timeline={timeline}
-            selectedEvent={selectedEvent}
-            onSelectEvent={setSelectedEventId}
-          />
         </div>
-      </div>
+      ) : null}
+
+      {tab === 'diagnostics' ? (
+        <DiagnosticsPanel
+          activeRun={snapshot.activeRun}
+          state={snapshot.state}
+          transport={snapshot.config.transport}
+          selectedRunId={snapshot.config.selectedRunId}
+          summary={snapshot.summary}
+          output={snapshot.lastOutput}
+          graph={snapshot.graph.nodes}
+          timeline={timeline}
+          selectedEvent={selectedEvent}
+          onSelectEvent={setSelectedEventId}
+        />
+      ) : null}
+
+      {tab === 'tokens' ? (
+        <TokenAnalyticsView
+          breakdown={snapshot.tokenBreakdown}
+          analytics={snapshot.tokenAnalytics}
+        />
+      ) : null}
     </div>
   )
 }

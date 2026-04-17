@@ -9,6 +9,7 @@ import {
   extractMessagesFromProviderPayload,
   extractUsageFromMessage,
   getRequestTelemetryPaths,
+  readRequestTelemetryContextFromEnv,
   summarizeProviderPayload,
   summarizeRequestSpans,
 } from '../../src/pi-request-telemetry.mjs'
@@ -51,10 +52,16 @@ function createTurnState({ turnIndex = 0, startedAt = '', model = '' } = {}) {
   }
 }
 
-function createRequestState({ sessionId, turnIndex = 0, startedAt, model = '' } = {}) {
+function createRequestState({ sessionId, turnIndex = 0, startedAt, model = '', metadata = {} } = {}) {
   return {
     requestId: randomUUID(),
     sessionId,
+    runId: String(metadata?.runId ?? '').trim(),
+    iteration: Number(metadata?.iteration ?? 0) || 0,
+    phase: String(metadata?.phase ?? '').trim(),
+    role: String(metadata?.role ?? '').trim(),
+    kind: String(metadata?.kind ?? '').trim(),
+    task: String(metadata?.task ?? '').trim(),
     turnIndex,
     startedAt,
     finishedAt: '',
@@ -277,6 +284,7 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
       turnIndex: currentTurn.turnIndex,
       startedAt: new Date().toISOString(),
       model: state.currentModel || currentTurn.model,
+      metadata: readRequestTelemetryContextFromEnv(),
       ...overrides,
     })
   }
@@ -307,7 +315,13 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
       request: {
         timestamp: requestState.finishedAt,
         requestId: requestState.requestId,
+        runId: requestState.runId,
         sessionId: requestState.sessionId,
+        iteration: requestState.iteration,
+        phase: requestState.phase,
+        role: requestState.role,
+        kind: requestState.kind,
+        task: requestState.task,
         turnIndex: requestState.turnIndex,
         startedAt: requestState.startedAt,
         finishedAt: requestState.finishedAt,

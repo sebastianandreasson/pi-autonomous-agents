@@ -574,6 +574,7 @@ async function runAgentInvocation({
   config,
   iteration,
   phase,
+  task,
   prompt,
   role,
   kind,
@@ -614,6 +615,7 @@ async function runAgentInvocation({
     retryCount,
     reason,
     phase,
+    task,
     role,
     kind,
   })
@@ -993,7 +995,7 @@ async function runVerificationStep({
   }
 }
 
-async function runMainTurnWithRetries({ config, state, iteration, phase, sessionId, sessionFile }) {
+async function runMainTurnWithRetries({ config, state, iteration, phase, task, sessionId, sessionFile }) {
   let currentSessionId = sessionId
   let currentSessionFile = sessionFile
   let loopHistory = pruneLoopHistory(state?.loopHistory, {
@@ -1012,6 +1014,7 @@ async function runMainTurnWithRetries({ config, state, iteration, phase, session
       config,
       iteration,
       phase,
+      task,
       prompt,
       role: attempt === 0 ? 'developer' : 'developerRetry',
       kind: 'main_agent',
@@ -1108,7 +1111,7 @@ async function runMainTurnWithRetries({ config, state, iteration, phase, session
   throw new Error('Retry loop exited unexpectedly.')
 }
 
-async function runFixTurn({ config, state, iteration, phase, sessionId, sessionFile, testerOutput }) {
+async function runFixTurn({ config, state, iteration, phase, task, sessionId, sessionFile, testerOutput }) {
   const largeFileWarnings = findLargeFileWarnings(config, listChangedFiles(config.cwd))
   const fixPrompt = buildFixPrompt(
     config,
@@ -1124,6 +1127,7 @@ async function runFixTurn({ config, state, iteration, phase, sessionId, sessionF
     config,
     iteration,
     phase,
+    task,
     prompt: fixPrompt,
     role: 'developerFix',
     kind: 'fix_agent',
@@ -1139,6 +1143,7 @@ async function runDeveloperVerificationAndFix({
   state,
   iteration,
   phase,
+  task,
   sessionId,
   sessionFile,
   noteParts,
@@ -1179,6 +1184,7 @@ async function runDeveloperVerificationAndFix({
       state,
       iteration,
       phase,
+      task,
       sessionId,
       sessionFile,
       testerOutput: `[developer_verification]\n${verification.output}`,
@@ -1243,6 +1249,7 @@ async function runTesterTurn({
     config,
     iteration,
     phase,
+    task,
     prompt,
     role: 'tester',
     kind: 'tester_agent',
@@ -1339,6 +1346,7 @@ async function runTesterCommitTurn({
     config,
     iteration,
     phase,
+    task,
     prompt,
     role: 'testerCommit',
     kind: 'tester_commit',
@@ -1736,6 +1744,7 @@ async function runIteration({ config, state, iteration }) {
     state,
     iteration,
     phase,
+    task,
     sessionId: startingSessionId,
     sessionFile: startingSessionFile,
   })
@@ -1766,6 +1775,7 @@ async function runIteration({ config, state, iteration }) {
       },
       iteration,
       phase,
+      task,
       sessionId,
       sessionFile,
       noteParts,
@@ -1925,6 +1935,7 @@ async function runIteration({ config, state, iteration }) {
         },
         iteration,
         phase,
+        task,
         sessionId,
         sessionFile,
         testerOutput: compactNotePartsForPrompt(config, noteParts),

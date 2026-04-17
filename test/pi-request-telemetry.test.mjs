@@ -11,6 +11,7 @@ import {
   collectMessageSpans,
   collectProviderPayloadSpans,
   createEmptyRequestTelemetryBreakdown,
+  deriveRequestTelemetryAnalytics,
   deriveRequestTelemetryBreakdown,
   deriveToolPaths,
   ensureBundledRequestTelemetryExtension,
@@ -20,6 +21,7 @@ import {
   getManagedRequestTelemetryExtensionPaths,
   getRequestTelemetryPaths,
   normalizeRequestUsage,
+  readRequestTelemetryContextFromEnv,
   summarizeProviderPayload,
   summarizeRequestSpans,
 } from '../src/pi-request-telemetry.mjs'
@@ -82,6 +84,24 @@ test('normalizeRequestUsage accepts Pi-style usage objects', () => {
     totalTokens: 16,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+  })
+})
+
+test('readRequestTelemetryContextFromEnv parses run-scoped request metadata', () => {
+  assert.deepEqual(readRequestTelemetryContextFromEnv({
+    PI_REQUEST_RUN_ID: 'run-1',
+    PI_REQUEST_ITERATION: '4',
+    PI_REQUEST_PHASE: 'Phase 1',
+    PI_REQUEST_ROLE: 'developer',
+    PI_REQUEST_KIND: 'main_agent',
+    PI_REQUEST_TASK: 'Implement token graph',
+  }), {
+    runId: 'run-1',
+    iteration: 4,
+    phase: 'Phase 1',
+    role: 'developer',
+    kind: 'main_agent',
+    task: 'Implement token graph',
   })
 })
 
@@ -377,6 +397,7 @@ test('request telemetry extension records provider-request-scoped rows', async (
 
   assert.equal(requestRows.length, 1)
   assert.equal(requestRows[0].turnIndex, 1)
+  assert.equal(requestRows[0].runId, '')
   assert.equal(requestRows[0].usageSource, 'message_usage')
   assert.equal(requestRows[0].spanSource, 'provider_payload')
   assert.equal(requestRows[0].providerPayloadSummary.messageCount, 2)
@@ -394,7 +415,12 @@ test('deriveRequestTelemetryBreakdown uses exact request totals and file-aware p
     requests: [
       {
         requestId: 'req-1',
+        runId: 'run-1',
         sessionId: 'session-1',
+        iteration: 1,
+        phase: 'Phase 1',
+        role: 'developer',
+        kind: 'main_agent',
         model: 'gpt-5.4',
         spanSource: 'provider_payload',
         inputTokens: 100,
@@ -407,7 +433,12 @@ test('deriveRequestTelemetryBreakdown uses exact request totals and file-aware p
       },
       {
         requestId: 'req-2',
+        runId: 'run-1',
         sessionId: 'session-1',
+        iteration: 1,
+        phase: 'Phase 1',
+        role: 'developer',
+        kind: 'main_agent',
         model: 'gpt-5.4',
         spanSource: 'session_history',
         inputTokens: 40,
@@ -463,10 +494,76 @@ test('deriveRequestTelemetryBreakdown uses exact request totals and file-aware p
   assert.equal(breakdown.source.requestCount, 2)
   assert.equal(breakdown.totals.totalTokens, 170)
   assert.equal(breakdown.breakdowns.byAttribution[0].key, 'provider_payload')
+  assert.equal(breakdown.breakdowns.byRole[0].key, 'developer')
+  assert.equal(breakdown.breakdowns.byPhase[0].key, 'Phase 1')
   assert.equal(breakdown.breakdowns.byModel[0].key, 'gpt-5.4')
   assert.equal(breakdown.breakdowns.byTool[0].key, 'read')
   assert.ok(breakdown.breakdowns.byFile.some((entry) => entry.key === 'README.md'))
   assert.ok(breakdown.breakdowns.byFile.some((entry) => entry.key === 'src/index.mjs'))
   assert.equal(breakdown.coverage.fileAttributedTokens, 150)
   assert.equal(breakdown.coverage.unattributedTokens, 40)
+})
+
+test('deriveRequestTelemetryAnalytics builds timeline and finished-todo totals from run-scoped requests', () => {
+  const analytics = deriveRequestTelemetryAnalytics({
+    requests: [
+      {
+        requestId: 'req-1',
+        runId: 'run-1',
+        iteration: 1,
+        phase: 'Phase 1',
+        role: 'developer',
+        kind: 'main_agent',
+        task: 'Build graph',
+        timestamp: '2026-04-17T10:00:00.000Z',
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        cacheReadTokens: 40,
+        cacheWriteTokens: 0,
+      },
+      {
+        requestId: 'req-2',
+        runId: 'run-1',
+        iteration: 1,
+        phase: 'Phase 1',
+        role: 'tester',
+        kind: 'tester_agent',
+        task: 'Build graph',
+        timestamp: '2026-04-17T10:01:00.000Z',
+        inputTokens: 20,
+        outputTokens: 10,
+        totalTokens: 30,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      {
+        requestId: 'req-3',
+        runId: 'run-1',
+        iteration: 2,
+        phase: 'Phase 2',
+        role: 'developer',
+        kind: 'main_agent',
+        task: 'Unfinished work',
+        timestamp: '2026-04-17T10:03:00.000Z',
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    ],
+    telemetry: [
+      { kind: 'iteration_summary', iteration: 1, phase: 'Phase 1', status: 'success', timestamp: '2026-04-17T10:02:00.000Z' },
+      { kind: 'iteration_summary', iteration: 2, phase: 'Phase 2', status: 'failed', timestamp: '2026-04-17T10:04:00.000Z' },
+    ],
+    runId: 'run-1',
+  })
+
+  assert.equal(analytics.source.requestCount, 3)
+  assert.equal(analytics.timeline.length, 3)
+  assert.equal(analytics.todos.length, 1)
+  assert.equal(analytics.todos[0].task, 'Build graph')
+  assert.equal(analytics.todos[0].totalTokens, 150)
+  assert.deepEqual(analytics.todos[0].roles, ['developer', 'tester'])
 })

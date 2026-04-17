@@ -164,6 +164,49 @@ export type TokenBreakdown = {
   }
 }
 
+export type TokenTimelinePoint = {
+  key: string
+  timestamp: string
+  label: string
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export type TodoTokenBreakdown = {
+  key: string
+  iteration: number
+  phase: string
+  task: string
+  status: string
+  requestCount: number
+  firstTimestamp: string
+  lastTimestamp: string
+  roles: string[]
+  kinds: string[]
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export type TokenAnalytics = {
+  schemaVersion?: number
+  generatedAt?: string
+  source: {
+    mode?: string
+    requestCount: number
+    runId?: string
+    sessionId?: string
+  }
+  timeline: TokenTimelinePoint[]
+  todos: TodoTokenBreakdown[]
+}
+
 export type VisualizerSnapshot = {
   now: string
   config: {
@@ -187,4 +230,5 @@ export type VisualizerSnapshot = {
   liveFeed: LiveFeedEntry[]
   recentTelemetry: TelemetryEvent[]
   tokenBreakdown: TokenBreakdown
+  tokenAnalytics: TokenAnalytics
 }

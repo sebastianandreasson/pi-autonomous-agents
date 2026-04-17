@@ -209,7 +209,7 @@ async function runMockTurn({ config, sessionId, sessionFile, prompt, reason }) {
   }
 }
 
-async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prompt, iteration, retryCount, reason, phase, role, kind }) {
+async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prompt, iteration, retryCount, reason, phase, role, kind, task }) {
   await appendLog(
     config.logFile,
     `Starting SDK turn iteration=${iteration} retry=${retryCount} reason=${reason}`
@@ -253,6 +253,7 @@ async function runSdkTransportTurn({ config, model, sessionId, sessionFile, prom
       phase,
       role,
       kind,
+      task,
       onLiveEvent: (event) => appendLiveFeedEvent(config, event),
     })
   } catch (error) {

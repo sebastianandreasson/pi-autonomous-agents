@@ -4,10 +4,14 @@ import path from 'node:path'
 import process from 'node:process'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { readJsonlTail, readTelemetryTail } from './pi-telemetry.mjs'
+import { readJsonlTail, readTelemetry, readTelemetryTail } from './pi-telemetry.mjs'
 import { readJsonFile } from './pi-repo.mjs'
 import { readTokenUsageSummary } from './pi-token-analysis.mjs'
-import { readRequestTelemetryBreakdown } from './pi-request-telemetry.mjs'
+import {
+  deriveRequestTelemetryAnalytics,
+  deriveRequestTelemetryBreakdown,
+  readRequestTelemetryRecords,
+} from './pi-request-telemetry.mjs'
 import { deriveFlowSnapshot, deriveStageGraph, formatActiveLabel } from './pi-visualizer-shared.mjs'
 
 export function readVisualizerHost() {
@@ -291,12 +295,14 @@ export async function buildSnapshot(config, queryRunId = '') {
   const selectedRunId = resolveSelectedRunId(queryRunId, activeRun, runs)
   const selectedConfig = selectedRunId !== '' ? getRunScopedConfig(config, selectedRunId) : config
 
-  const [state, summary, telemetry, currentOutput, liveFeed] = await Promise.all([
+  const [state, summary, telemetry, telemetryHistory, currentOutput, liveFeed, requestTelemetry] = await Promise.all([
     readJsonFile(selectedConfig.stateFile, null),
     readJsonFile(selectedConfig.lastIterationSummaryFile, null),
     readTelemetryTail(selectedConfig, 160, 512 * 1024),
+    readTelemetry(selectedConfig),
     readOptionalText(selectedConfig.lastAgentOutputFile, 5000),
     readJsonlTail(selectedConfig.liveFeedFile, { maxItems: 300, maxBytes: 768 * 1024 }),
+    readRequestTelemetryRecords({ cwd: config.cwd }),
   ])
 
   const flowOptions = {
@@ -324,8 +330,16 @@ export async function buildSnapshot(config, queryRunId = '') {
   const selectedRunIsActive = selectedRunId !== '' && String(activeRun?.runId ?? '') === selectedRunId
   const selectedRunState = selectedRunIsActive ? activeRun : state?.inProgress ?? null
   const sessionId = extractSessionId(selectedRunState, state, summary)
-  const requestTelemetryBreakdown = await readRequestTelemetryBreakdown({
-    cwd: config.cwd,
+  const requestTelemetryBreakdown = deriveRequestTelemetryBreakdown({
+    requests: requestTelemetry.requests,
+    spans: requestTelemetry.spans,
+    runId: selectedRunId,
+    sessionId,
+  })
+  const tokenAnalytics = deriveRequestTelemetryAnalytics({
+    requests: requestTelemetry.requests,
+    telemetry: telemetryHistory,
+    runId: selectedRunId,
     sessionId,
   })
   const tokenBreakdown = Number(requestTelemetryBreakdown?.source?.requestCount ?? 0) > 0
@@ -363,6 +377,7 @@ export async function buildSnapshot(config, queryRunId = '') {
     liveFeed: sortedLiveFeed,
     recentTelemetry,
     tokenBreakdown,
+    tokenAnalytics,
   }
 }
 

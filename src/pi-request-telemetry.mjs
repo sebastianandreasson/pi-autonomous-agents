@@ -4,6 +4,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export const REQUEST_TELEMETRY_SCHEMA_VERSION = 1
 export const REQUEST_TELEMETRY_EXTENSION_DIRNAME = 'pi-harness-request-telemetry'
+export const REQUEST_TELEMETRY_ENV_KEYS = Object.freeze({
+  runId: 'PI_REQUEST_RUN_ID',
+  iteration: 'PI_REQUEST_ITERATION',
+  phase: 'PI_REQUEST_PHASE',
+  role: 'PI_REQUEST_ROLE',
+  kind: 'PI_REQUEST_KIND',
+  task: 'PI_REQUEST_TASK',
+})
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const packageRoot = path.resolve(scriptDir, '..')
@@ -147,6 +155,7 @@ function createEmptyBreakdownShape(mode = 'request_telemetry') {
       eventCount: 0,
       requestCount: 0,
       spanCount: 0,
+      runId: '',
       sessionId: '',
     },
     totals: {
@@ -173,6 +182,21 @@ function createEmptyBreakdownShape(mode = 'request_telemetry') {
       byFile: [],
       byDirectory: [],
     },
+  }
+}
+
+function createEmptyAnalyticsShape() {
+  return {
+    schemaVersion: REQUEST_TELEMETRY_SCHEMA_VERSION,
+    generatedAt: '',
+    source: {
+      mode: 'request_telemetry',
+      requestCount: 0,
+      runId: '',
+      sessionId: '',
+    },
+    timeline: [],
+    todos: [],
   }
 }
 
@@ -205,6 +229,35 @@ function parseJsonLikeString(value) {
   }
 }
 
+function filterRequestsForScope(requests, { runId = '', sessionId = '' } = {}) {
+  const normalizedRequests = (Array.isArray(requests) ? requests : []).map((request) => normalizeRequestTelemetryRecord(request))
+  const requestedRunId = normalizeString(runId, '')
+  const requestedSessionId = normalizeString(sessionId, '')
+  const latestRequest = [...normalizedRequests]
+    .sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp)))[0]
+
+  const selectedRunId = requestedRunId !== '' && normalizedRequests.some((request) => request.runId === requestedRunId)
+    ? requestedRunId
+    : normalizeString(latestRequest?.runId, '')
+  const selectedSessionId = selectedRunId === '' && requestedSessionId !== '' && normalizedRequests.some((request) => request.sessionId === requestedSessionId)
+    ? requestedSessionId
+    : selectedRunId === ''
+      ? normalizeString(latestRequest?.sessionId, '')
+      : ''
+
+  const filteredRequests = selectedRunId !== ''
+    ? normalizedRequests.filter((request) => request.runId === selectedRunId)
+    : selectedSessionId === ''
+      ? normalizedRequests
+      : normalizedRequests.filter((request) => request.sessionId === selectedSessionId)
+
+  return {
+    filteredRequests,
+    selectedRunId,
+    selectedSessionId,
+  }
+}
+
 export function createEmptyRequestUsage() {
   return {
     inputTokens: 0,
@@ -212,6 +265,17 @@ export function createEmptyRequestUsage() {
     totalTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+  }
+}
+
+export function readRequestTelemetryContextFromEnv(env = process.env) {
+  return {
+    runId: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.runId], ''),
+    iteration: toFiniteNumber(env?.[REQUEST_TELEMETRY_ENV_KEYS.iteration]),
+    phase: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.phase], ''),
+    role: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.role], ''),
+    kind: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.kind], ''),
+    task: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.task], ''),
   }
 }
 
@@ -712,7 +776,13 @@ export function normalizeRequestTelemetryRecord(record) {
     schemaVersion: REQUEST_TELEMETRY_SCHEMA_VERSION,
     timestamp: isoFromValue(record?.timestamp),
     requestId: normalizeString(record?.requestId, ''),
+    runId: normalizeString(record?.runId, ''),
     sessionId: normalizeString(record?.sessionId, ''),
+    iteration: toFiniteNumber(record?.iteration),
+    phase: normalizeString(record?.phase, ''),
+    role: normalizeString(record?.role, ''),
+    kind: normalizeString(record?.kind, ''),
+    task: normalizeString(record?.task, ''),
     turnIndex: toFiniteNumber(record?.turnIndex),
     startedAt: normalizeString(record?.startedAt, ''),
     finishedAt: normalizeString(record?.finishedAt, ''),
@@ -908,7 +978,7 @@ export async function appendRequestTelemetryArtifacts(paths, { request, spans = 
   }
 }
 
-export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], sessionId = '' } = {}) {
+export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], sessionId = '', runId = '' } = {}) {
   const empty = createEmptyRequestTelemetryBreakdown()
   const normalizedRequests = (Array.isArray(requests) ? requests : [])
     .map((request) => normalizeRequestTelemetryRecord(request))
@@ -917,16 +987,10 @@ export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], ses
     return empty
   }
 
-  const requestedSessionId = normalizeString(sessionId, '')
-  const latestRequest = [...normalizedRequests]
-    .sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp)))[0]
-  const selectedSessionId = requestedSessionId !== '' && normalizedRequests.some((request) => request.sessionId === requestedSessionId)
-    ? requestedSessionId
-    : normalizeString(latestRequest?.sessionId, '')
-
-  const filteredRequests = selectedSessionId === ''
-    ? normalizedRequests
-    : normalizedRequests.filter((request) => request.sessionId === selectedSessionId)
+  const { filteredRequests, selectedRunId, selectedSessionId } = filterRequestsForScope(normalizedRequests, {
+    runId,
+    sessionId,
+  })
   const requestIds = new Set(filteredRequests.map((request) => request.requestId))
   const filteredSpans = (Array.isArray(spans) ? spans : [])
     .map((span) => normalizeRequestSpanRecord(span))
@@ -941,6 +1005,9 @@ export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], ses
 
   const totals = { ...empty.totals }
   const byAttribution = createBucketMap()
+  const byKind = createBucketMap()
+  const byRole = createBucketMap()
+  const byPhase = createBucketMap()
   const byModel = createBucketMap()
   const bySession = createBucketMap()
   const byTool = createBucketMap()
@@ -966,6 +1033,9 @@ export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], ses
     totals.eventCount += 1
 
     addUsageToBucket(byAttribution, request.spanSource, request.spanSource, exactUsage, 1)
+    addUsageToBucket(byKind, request.kind, request.kind, exactUsage, 1)
+    addUsageToBucket(byRole, request.role, request.role, exactUsage, 1)
+    addUsageToBucket(byPhase, request.phase, request.phase, exactUsage, 1)
     addUsageToBucket(byModel, request.model, request.model, exactUsage, 1)
     addUsageToBucket(bySession, request.sessionId, request.sessionId, exactUsage, 1)
 
@@ -1050,6 +1120,7 @@ export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], ses
       eventCount: filteredRequests.length,
       requestCount: filteredRequests.length,
       spanCount: filteredSpans.length,
+      runId: selectedRunId,
       sessionId: selectedSessionId,
     },
     totals: {
@@ -1066,9 +1137,9 @@ export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], ses
       fileAttributionRatio: totalInputContextTokens > 0 ? fileAttributedTokens / totalInputContextTokens : 0,
     },
     breakdowns: {
-      byKind: [],
-      byRole: [],
-      byPhase: [],
+      byKind: finalizeBucketMap(byKind),
+      byRole: finalizeBucketMap(byRole),
+      byPhase: finalizeBucketMap(byPhase),
       byModel: finalizeBucketMap(byModel),
       bySession: finalizeBucketMap(bySession),
       byAttribution: finalizeBucketMap(byAttribution),
@@ -1079,11 +1150,168 @@ export function deriveRequestTelemetryBreakdown({ requests = [], spans = [], ses
   }
 }
 
-export async function readRequestTelemetryBreakdown({ cwd, sessionId = '', baseDir } = {}) {
+function formatTimelineLabel(timestamp) {
+  const date = new Date(timestamp)
+  if (!Number.isFinite(date.getTime())) {
+    return ''
+  }
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function summarizeTodoRequests(requests, iterationSummary) {
+  const sorted = [...requests].sort((left, right) => String(left.timestamp).localeCompare(String(right.timestamp)))
+  const firstRequest = sorted[0]
+  const lastRequest = sorted.at(-1)
+  const task = sorted.find((request) => request.task !== '')?.task || iterationSummary?.task || `Iteration ${firstRequest?.iteration ?? 0}`
+  const phase = sorted.find((request) => request.phase !== '')?.phase || iterationSummary?.phase || ''
+  const roleSet = new Set(sorted.map((request) => request.role).filter(Boolean))
+  const kindSet = new Set(sorted.map((request) => request.kind).filter(Boolean))
+
+  return {
+    key: `iteration-${firstRequest?.iteration ?? 0}`,
+    iteration: Number(firstRequest?.iteration ?? 0),
+    phase,
+    task,
+    status: String(iterationSummary?.status ?? ''),
+    requestCount: sorted.length,
+    firstTimestamp: String(firstRequest?.timestamp ?? ''),
+    lastTimestamp: String(lastRequest?.timestamp ?? ''),
+    roles: [...roleSet],
+    kinds: [...kindSet],
+    inputTokens: sorted.reduce((sum, request) => sum + request.inputTokens, 0),
+    outputTokens: sorted.reduce((sum, request) => sum + request.outputTokens, 0),
+    totalTokens: sorted.reduce((sum, request) => sum + request.totalTokens, 0),
+    cacheReadTokens: sorted.reduce((sum, request) => sum + request.cacheReadTokens, 0),
+    cacheWriteTokens: sorted.reduce((sum, request) => sum + request.cacheWriteTokens, 0),
+  }
+}
+
+export function deriveRequestTelemetryAnalytics({ requests = [], telemetry = [], runId = '', sessionId = '' } = {}) {
+  const empty = createEmptyAnalyticsShape()
+  const normalizedRequests = (Array.isArray(requests) ? requests : [])
+    .map((request) => normalizeRequestTelemetryRecord(request))
+
+  if (normalizedRequests.length === 0) {
+    return empty
+  }
+
+  const { filteredRequests, selectedRunId, selectedSessionId } = filterRequestsForScope(normalizedRequests, {
+    runId,
+    sessionId,
+  })
+
+  if (filteredRequests.length === 0) {
+    return empty
+  }
+
+  const sortedRequests = [...filteredRequests].sort((left, right) => String(left.timestamp).localeCompare(String(right.timestamp)))
+  const timeline = []
+
+  if (sortedRequests.length <= 36) {
+    for (const request of sortedRequests) {
+      timeline.push({
+        key: request.requestId,
+        timestamp: request.timestamp,
+        label: formatTimelineLabel(request.timestamp),
+        requestCount: 1,
+        inputTokens: request.inputTokens,
+        outputTokens: request.outputTokens,
+        totalTokens: request.totalTokens,
+        cacheReadTokens: request.cacheReadTokens,
+        cacheWriteTokens: request.cacheWriteTokens,
+      })
+    }
+  } else {
+    const startedAt = new Date(sortedRequests[0].timestamp).getTime()
+    const finishedAt = new Date(sortedRequests.at(-1)?.timestamp ?? sortedRequests[0].timestamp).getTime()
+    const bucketCount = 36
+    const bucketMs = Math.max(1, Math.ceil((finishedAt - startedAt + 1) / bucketCount))
+    const buckets = new Map()
+
+    for (const request of sortedRequests) {
+      const bucketIndex = Math.max(0, Math.min(bucketCount - 1, Math.floor((new Date(request.timestamp).getTime() - startedAt) / bucketMs)))
+      const bucketStart = new Date(startedAt + (bucketIndex * bucketMs)).toISOString()
+      const current = buckets.get(bucketIndex) ?? {
+        key: `bucket-${bucketIndex}`,
+        timestamp: bucketStart,
+        label: formatTimelineLabel(bucketStart),
+        requestCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      }
+      current.requestCount += 1
+      current.inputTokens += request.inputTokens
+      current.outputTokens += request.outputTokens
+      current.totalTokens += request.totalTokens
+      current.cacheReadTokens += request.cacheReadTokens
+      current.cacheWriteTokens += request.cacheWriteTokens
+      buckets.set(bucketIndex, current)
+    }
+
+    timeline.push(...[...buckets.entries()]
+      .sort((left, right) => left[0] - right[0])
+      .map(([, bucket]) => bucket))
+  }
+
+  const iterationSummaries = new Map()
+  for (const event of Array.isArray(telemetry) ? telemetry : []) {
+    if (String(event?.kind ?? '') !== 'iteration_summary') {
+      continue
+    }
+    iterationSummaries.set(Number(event?.iteration ?? 0), {
+      iteration: Number(event?.iteration ?? 0),
+      phase: String(event?.phase ?? ''),
+      status: String(event?.status ?? ''),
+      timestamp: String(event?.timestamp ?? ''),
+    })
+  }
+
+  const requestsByIteration = new Map()
+  for (const request of sortedRequests) {
+    const iteration = Number(request.iteration ?? 0)
+    if (!Number.isFinite(iteration) || iteration <= 0) {
+      continue
+    }
+    const existing = requestsByIteration.get(iteration) ?? []
+    existing.push(request)
+    requestsByIteration.set(iteration, existing)
+  }
+
+  const todos = [...requestsByIteration.entries()]
+    .map(([iteration, iterationRequests]) => summarizeTodoRequests(iterationRequests, iterationSummaries.get(iteration)))
+    .filter((todo) => todo.status === 'success')
+    .sort((left, right) => right.iteration - left.iteration)
+
+  return {
+    schemaVersion: REQUEST_TELEMETRY_SCHEMA_VERSION,
+    generatedAt: now(),
+    source: {
+      mode: 'request_telemetry',
+      requestCount: sortedRequests.length,
+      runId: selectedRunId,
+      sessionId: selectedSessionId,
+    },
+    timeline,
+    todos,
+  }
+}
+
+export async function readRequestTelemetryRecords({ cwd, baseDir } = {}) {
   const paths = getRequestTelemetryPaths({ cwd, baseDir })
   const [requests, spans] = await Promise.all([
     readJsonlRecords(paths.requestsFile, normalizeRequestTelemetryRecord),
     readJsonlRecords(paths.spansFile, normalizeRequestSpanRecord),
   ])
-  return deriveRequestTelemetryBreakdown({ requests, spans, sessionId })
+  return { requests, spans }
+}
+
+export async function readRequestTelemetryBreakdown({ cwd, sessionId = '', runId = '', baseDir } = {}) {
+  const { requests, spans } = await readRequestTelemetryRecords({ cwd, baseDir })
+  return deriveRequestTelemetryBreakdown({ requests, spans, sessionId, runId })
 }

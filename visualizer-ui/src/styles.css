@@ -48,6 +48,10 @@ button {
   padding: 20px;
 }
 
+.wrap.wide {
+  max-width: none;
+}
+
 .header {
   display: flex;
   justify-content: space-between;
@@ -64,6 +68,27 @@ button {
 .subtitle {
   color: var(--muted);
   margin-top: 4px;
+}
+
+.tab-strip {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.tab-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+}
+
+.tab-chip.active {
+  border-color: var(--active);
+  background: rgba(110, 231, 255, 0.12);
+  box-shadow: 0 0 0 1px rgba(110, 231, 255, 0.2) inset;
 }
 
 .toolbar {
@@ -354,6 +379,147 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
+}
+
+.token-page {
+  display: grid;
+  gap: 18px;
+}
+
+.token-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(360px, 0.8fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.token-hero-copy,
+.token-hero-stats {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px;
+}
+
+.token-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.token-hero-title {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.05;
+  margin-top: 8px;
+}
+
+.token-hero-subtitle {
+  color: var(--muted);
+  max-width: 720px;
+  margin-top: 10px;
+}
+
+.token-stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.token-page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+  gap: 16px;
+}
+
+.token-timeline-card,
+.token-todos-card {
+  min-height: 380px;
+}
+
+.token-timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18px, 1fr));
+  align-items: end;
+  gap: 8px;
+  min-height: 300px;
+  margin-top: 18px;
+}
+
+.token-timeline-point {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.token-timeline-bar {
+  width: 100%;
+  min-height: 220px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: end;
+  padding: 3px;
+}
+
+.token-timeline-fill {
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #6ee7ff, #53d18d);
+}
+
+.token-timeline-label,
+.token-timeline-value {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.token-todo-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  max-height: 540px;
+  overflow: auto;
+}
+
+.token-todo-row {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: var(--panel);
+}
+
+.token-todo-head {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.token-todo-text {
+  min-width: 0;
+}
+
+.token-todo-title {
+  font-weight: 700;
+}
+
+.token-todo-total {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.token-todo-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.token-todo-meta-foot {
+  margin-top: 8px;
 }
 
 .token-section {
@@ -657,6 +823,8 @@ tr[data-clickable="1"] {
 @media (max-width: 1100px) {
   .main-grid,
   .detail-split,
+  .token-hero,
+  .token-page-grid,
   .flow {
     grid-template-columns: 1fr;
   }

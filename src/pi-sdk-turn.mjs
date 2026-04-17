@@ -13,7 +13,11 @@ import {
   normalizeStringList,
   normalizeTokenUsage,
 } from './pi-token-analysis.mjs'
-import { ensureBundledRequestTelemetryExtension } from './pi-request-telemetry.mjs'
+import {
+  REQUEST_TELEMETRY_ENV_KEYS,
+  ensureBundledRequestTelemetryExtension,
+  readRequestTelemetryContextFromEnv,
+} from './pi-request-telemetry.mjs'
 
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh'])
 
@@ -114,6 +118,39 @@ function addTokenUsage(total, value) {
     totalTokens: total.totalTokens + next.totalTokens,
     cacheReadTokens: total.cacheReadTokens + next.cacheReadTokens,
     cacheWriteTokens: total.cacheWriteTokens + next.cacheWriteTokens,
+  }
+}
+
+function applyRequestTelemetryEnv(request) {
+  const previous = readRequestTelemetryContextFromEnv()
+  const nextValues = {
+    [REQUEST_TELEMETRY_ENV_KEYS.runId]: String(process.env.PI_RUN_ID ?? '').trim(),
+    [REQUEST_TELEMETRY_ENV_KEYS.iteration]: Number.isFinite(Number(request?.metadata?.iteration))
+      ? String(Number(request.metadata.iteration))
+      : '',
+    [REQUEST_TELEMETRY_ENV_KEYS.phase]: String(request?.phase ?? '').trim(),
+    [REQUEST_TELEMETRY_ENV_KEYS.role]: String(request?.role ?? '').trim(),
+    [REQUEST_TELEMETRY_ENV_KEYS.kind]: String(request?.kind ?? '').trim(),
+    [REQUEST_TELEMETRY_ENV_KEYS.task]: String(request?.task ?? '').trim(),
+  }
+
+  for (const [key, value] of Object.entries(nextValues)) {
+    if (value === '') {
+      delete process.env[key]
+      continue
+    }
+    process.env[key] = value
+  }
+
+  return () => {
+    for (const [field, key] of Object.entries(REQUEST_TELEMETRY_ENV_KEYS)) {
+      const previousValue = String(previous?.[field] ?? '').trim()
+      if (previousValue === '') {
+        delete process.env[key]
+        continue
+      }
+      process.env[key] = previousValue
+    }
   }
 }
 
@@ -404,6 +441,7 @@ async function safeAbort(session) {
 }
 
 export async function runSdkTurnWithPi(pi, request) {
+  const restoreRequestTelemetryEnv = applyRequestTelemetryEnv(request)
   const streamTerminal = request.streamTerminal === true
   const requestedModel = typeof request.model === 'string' ? request.model : ''
   const loopRepeatThreshold = Number.isFinite(Number(request.loopRepeatThreshold))
@@ -833,6 +871,7 @@ export async function runSdkTurnWithPi(pi, request) {
       terminalReason,
     }
   } finally {
+    restoreRequestTelemetryEnv()
     unsubscribe()
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval)
