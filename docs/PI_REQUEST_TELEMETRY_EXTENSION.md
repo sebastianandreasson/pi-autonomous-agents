@@ -2,7 +2,7 @@
 
 This document describes the repo-local Pi extension prototype under [pi-extensions/request-telemetry](../pi-extensions/request-telemetry/README.md).
 
-In normal `pi-harness` SDK runs, this extension is auto-enabled by installing a managed shim under `.pi/extensions/pi-harness-request-telemetry/` in the consuming repo before Pi reloads resources. Opt out with `PI_REQUEST_TELEMETRY_ENABLED=0` or `"piRequestTelemetryEnabled": false`.
+In normal `pi-harness` SDK runs, this extension is auto-enabled by installing a managed extension package under `.pi/extensions/pi-harness-request-telemetry/` in the consuming repo before Pi reloads resources. That package contains a `package.json` Pi manifest plus the generated `index.mjs` shim. Opt out with `PI_REQUEST_TELEMETRY_ENABLED=0` or `"piRequestTelemetryEnabled": false`.
 
 The purpose of this extension is to gather request-level data directly from Pi extension hooks before we decide whether to patch `@mariozechner/pi-coding-agent` or `pi-ai`.
 

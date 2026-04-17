@@ -761,6 +761,7 @@ export function getManagedRequestTelemetryExtensionPaths({ cwd } = {}) {
     extensionRoot,
     extensionDir,
     entryFile: path.join(extensionDir, 'index.mjs'),
+    manifestFile: path.join(extensionDir, 'package.json'),
     sourceFile: bundledRequestTelemetryExtensionFile,
   }
 }
@@ -773,6 +774,17 @@ function renderRequestTelemetryExtensionShim(sourceFile) {
     `export { default } from ${JSON.stringify(sourceUrl)}`,
     '',
   ].join('\n')
+}
+
+function renderRequestTelemetryExtensionManifest() {
+  return `${JSON.stringify({
+    name: REQUEST_TELEMETRY_EXTENSION_DIRNAME,
+    private: true,
+    type: 'module',
+    pi: {
+      extensions: ['./index.mjs'],
+    },
+  }, null, 2)}\n`
 }
 
 export async function ensureBundledRequestTelemetryExtension({ cwd, enabled = true } = {}) {
@@ -792,15 +804,23 @@ export async function ensureBundledRequestTelemetryExtension({ cwd, enabled = tr
   await fs.access(paths.sourceFile)
   await fs.mkdir(paths.extensionDir, { recursive: true })
 
-  const content = renderRequestTelemetryExtensionShim(paths.sourceFile)
-  let existing = ''
+  const entryContent = renderRequestTelemetryExtensionShim(paths.sourceFile)
+  const manifestContent = renderRequestTelemetryExtensionManifest()
+  let existingEntry = ''
+  let existingManifest = ''
   try {
-    existing = await fs.readFile(paths.entryFile, 'utf8')
+    existingEntry = await fs.readFile(paths.entryFile, 'utf8')
+  } catch {}
+  try {
+    existingManifest = await fs.readFile(paths.manifestFile, 'utf8')
   } catch {}
 
-  const updated = existing !== content
-  if (updated) {
-    await fs.writeFile(paths.entryFile, content, 'utf8')
+  const updated = existingEntry !== entryContent || existingManifest !== manifestContent
+  if (existingEntry !== entryContent) {
+    await fs.writeFile(paths.entryFile, entryContent, 'utf8')
+  }
+  if (existingManifest !== manifestContent) {
+    await fs.writeFile(paths.manifestFile, manifestContent, 'utf8')
   }
 
   return {

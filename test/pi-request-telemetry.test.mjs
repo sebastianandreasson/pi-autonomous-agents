@@ -101,10 +101,13 @@ test('ensureBundledRequestTelemetryExtension installs and removes managed Pi ext
 
   assert.equal(installed.installed, true)
   assert.equal(await pathExists(installed.entryFile), true)
+  assert.equal(await pathExists(installed.manifestFile), true)
 
   const shim = await fs.readFile(installed.entryFile, 'utf8')
   assert.match(shim, /Managed by @sebastianandreasson\/pi-autonomous-agents/)
   assert.match(shim, new RegExp(pathToFileURL(getBundledRequestTelemetryExtensionFile()).href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  const manifest = JSON.parse(await fs.readFile(installed.manifestFile, 'utf8'))
+  assert.deepEqual(manifest.pi?.extensions, ['./index.mjs'])
 
   const secondInstall = await ensureBundledRequestTelemetryExtension({ cwd, enabled: true })
   assert.equal(secondInstall.updated, false)

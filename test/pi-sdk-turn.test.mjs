@@ -229,8 +229,11 @@ test('createSdkSession auto-installs managed request telemetry extension by defa
   })
 
   const shimFile = path.join(cwd, '.pi', 'extensions', 'pi-harness-request-telemetry', 'index.mjs')
+  const manifestFile = path.join(cwd, '.pi', 'extensions', 'pi-harness-request-telemetry', 'package.json')
   const shim = await fs.readFile(shimFile, 'utf8')
   assert.match(shim, /request telemetry extension/i)
+  const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'))
+  assert.deepEqual(manifest.pi?.extensions, ['./index.mjs'])
 })
 
 test('createSdkSession removes managed request telemetry extension when disabled', async () => {

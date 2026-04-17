@@ -80,7 +80,7 @@ Typical scripts:
 
 Start from [templates/pi.config.example.json](./templates/pi.config.example.json), [templates/DEVELOPER.md](./templates/DEVELOPER.md), [templates/TESTER.md](./templates/TESTER.md), and [templates/gitignore.fragment](./templates/gitignore.fragment).
 
-Request telemetry is enabled by default for SDK runs. `pi-harness` writes a managed Pi extension shim to `.pi/extensions/pi-harness-request-telemetry/index.mjs` in the consuming repo, and Pi auto-discovers it on the next resource reload. Disable that with `PI_REQUEST_TELEMETRY_ENABLED=0` or `"piRequestTelemetryEnabled": false`.
+Request telemetry is enabled by default for SDK runs. `pi-harness` writes a managed Pi extension package under `.pi/extensions/pi-harness-request-telemetry/` in the consuming repo, with a `package.json` manifest and `index.mjs` shim that Pi auto-discovers on the next resource reload. Disable that with `PI_REQUEST_TELEMETRY_ENABLED=0` or `"piRequestTelemetryEnabled": false`.
 
 ## CLI
 
