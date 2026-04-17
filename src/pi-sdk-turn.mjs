@@ -132,6 +132,47 @@ function deriveTokenAttributionKind({ activeToolName, pendingToolNames, pendingF
   return 'agent'
 }
 
+function emitTokenUsageAttribution({
+  request,
+  sessionId,
+  model,
+  tokenUsage,
+  activeToolName,
+  pendingToolNames,
+  pendingFiles,
+  lastAssistantActivity,
+}) {
+  const usage = normalizeTokenUsage(tokenUsage)
+  if (usage.totalTokens <= 0 && usage.inputTokens <= 0 && usage.outputTokens <= 0) {
+    return
+  }
+
+  const toolNames = normalizeStringList([...pendingToolNames])
+  const files = normalizeStringList([...pendingFiles])
+  const attributionKind = deriveTokenAttributionKind({
+    activeToolName,
+    pendingToolNames,
+    pendingFiles,
+    lastAssistantActivity,
+  })
+
+  emitLiveFeed(request, {
+    type: 'token_usage',
+    text: [
+      formatTokenUsageSummary(usage),
+      attributionKind !== 'agent' ? `attribution=${attributionKind}` : '',
+      files.length > 0 ? `files=${files.slice(0, 3).join(',')}${files.length > 3 ? ',…' : ''}` : '',
+    ].filter(Boolean).join(' '),
+    ...usage,
+    attributionKind,
+    toolNames,
+    files,
+    primaryFile: files[0] ?? '',
+    sessionId: String(sessionId ?? ''),
+    model: String(model ?? ''),
+  })
+}
+
 export function splitModelSpec(modelSpec) {
   const raw = String(modelSpec ?? '').trim()
   if (raw === '') {
@@ -523,28 +564,15 @@ export async function runSdkTurnWithPi(pi, request) {
       if (event.type === 'token_usage') {
         tokenUsageEvents += 1
         tokenUsage = addTokenUsage(tokenUsage, event)
-        const toolNames = normalizeStringList([...pendingToolNames])
-        const files = normalizeStringList([...pendingFiles])
-        const attributionKind = deriveTokenAttributionKind({
+        emitTokenUsageAttribution({
+          request,
+          sessionId: session?.sessionId ?? '',
+          model: requestedModel,
+          tokenUsage: event,
           activeToolName,
           pendingToolNames,
           pendingFiles,
           lastAssistantActivity,
-        })
-        emitLiveFeed(request, {
-          type: 'token_usage',
-          text: [
-            formatTokenUsageSummary(event),
-            attributionKind !== 'agent' ? `attribution=${attributionKind}` : '',
-            files.length > 0 ? `files=${files.slice(0, 3).join(',')}${files.length > 3 ? ',…' : ''}` : '',
-          ].filter(Boolean).join(' '),
-          ...normalizeTokenUsage(event),
-          attributionKind,
-          toolNames,
-          files,
-          primaryFile: files[0] ?? '',
-          sessionId: String(session?.sessionId ?? ''),
-          model: requestedModel,
         })
         pendingToolNames.clear()
         pendingFiles.clear()
@@ -723,7 +751,20 @@ export async function runSdkTurnWithPi(pi, request) {
     const messageUpdates = events.filter((event) => event.type === 'message_update').length
     const lastAssistantMessage = getLastAssistantMessage(session.messages)
     if (tokenUsageEvents === 0) {
-      tokenUsage = addTokenUsage(tokenUsage, lastAssistantMessage?.usage)
+      const fallbackUsage = normalizeTokenUsage(lastAssistantMessage?.usage)
+      tokenUsage = addTokenUsage(tokenUsage, fallbackUsage)
+      emitTokenUsageAttribution({
+        request,
+        sessionId: session?.sessionId ?? '',
+        model: requestedModel,
+        tokenUsage: fallbackUsage,
+        activeToolName,
+        pendingToolNames,
+        pendingFiles,
+        lastAssistantActivity,
+      })
+      pendingToolNames.clear()
+      pendingFiles.clear()
     }
     const assistantText = extractAssistantText(lastAssistantMessage).trim()
     const assistantError = String(lastAssistantMessage?.errorMessage ?? '').trim()

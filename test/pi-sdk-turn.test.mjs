@@ -315,6 +315,7 @@ test('runSdkTurnWithPi marks repeated tool churn as stalled and aborts session',
 })
 
 test('runSdkTurnWithPi falls back to assistant message usage when token_usage events are absent', async () => {
+  const liveEvents = []
   const pi = createFakePi({
     promptImpl: async (session) => {
       session.emit({ type: 'agent_start' })
@@ -347,6 +348,9 @@ test('runSdkTurnWithPi falls back to assistant message usage when token_usage ev
     model: 'local/dev-model',
     tools: 'read',
     noThemes: true,
+    onLiveEvent(event) {
+      liveEvents.push(event)
+    },
   })
 
   assert.equal(result.inputTokens, 77)
@@ -354,4 +358,6 @@ test('runSdkTurnWithPi falls back to assistant message usage when token_usage ev
   assert.equal(result.totalTokens, 100)
   assert.equal(result.cacheReadTokens, 5)
   assert.equal(result.cacheWriteTokens, 0)
+  assert.equal(liveEvents.filter((event) => event.type === 'token_usage').length, 1)
+  assert.equal(liveEvents.find((event) => event.type === 'token_usage')?.totalTokens, 100)
 })
