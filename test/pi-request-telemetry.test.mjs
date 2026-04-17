@@ -211,6 +211,45 @@ test('extractMessagesFromProviderPayload normalizes responses-style input items'
   assert.equal(messages[2].role, 'toolResult')
 })
 
+test('extractMessagesFromProviderPayload normalizes chat-completions tool calls and tool messages', () => {
+  const messages = extractMessagesFromProviderPayload({
+    messages: [
+      { role: 'user', content: 'Inspect README.md' },
+      {
+        role: 'assistant',
+        content: 'Need inspect file.',
+        tool_calls: [
+          {
+            id: 'call-1',
+            type: 'function',
+            function: {
+              name: 'read',
+              arguments: '{"path":"README.md"}',
+            },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'call-1',
+        name: 'read',
+        content: '# README',
+      },
+    ],
+  })
+
+  assert.equal(messages.length, 3)
+  assert.equal(messages[0].role, 'user')
+  assert.equal(messages[1].role, 'assistant')
+  assert.equal(messages[1].content[0].type, 'text')
+  assert.equal(messages[1].content[1].type, 'toolCall')
+  assert.equal(messages[1].content[1].name, 'read')
+  assert.deepEqual(messages[1].content[1].arguments, { path: 'README.md' })
+  assert.equal(messages[2].role, 'toolResult')
+  assert.equal(messages[2].toolCallId, 'call-1')
+  assert.equal(messages[2].toolName, 'read')
+})
+
 test('collectProviderPayloadSpans derives exact spans from provider payload input', () => {
   const snapshot = collectProviderPayloadSpans({
     requestId: 'req-1',
@@ -254,6 +293,50 @@ test('collectProviderPayloadSpans parses stringified tool args and recovers tool
   assert.deepEqual(snapshot.spans[1].paths, ['README.md'])
   assert.equal(snapshot.spans[2].toolName, 'read')
   assert.deepEqual(snapshot.spans[2].paths, ['README.md'])
+})
+
+test('collectProviderPayloadSpans handles chat-completions style tool calls and tool messages', () => {
+  const snapshot = collectProviderPayloadSpans({
+    requestId: 'req-chat-1',
+    sessionId: 'session-1',
+    turnIndex: 3,
+    payload: {
+      model: 'qwen',
+      messages: [
+        { role: 'user', content: 'Inspect README.md' },
+        {
+          role: 'assistant',
+          content: 'Need inspect file.',
+          tool_calls: [
+            {
+              id: 'call-1',
+              type: 'function',
+              function: {
+                name: 'read',
+                arguments: '{"path":"README.md"}',
+              },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'call-1',
+          name: 'read',
+          content: '# README',
+        },
+      ],
+    },
+  })
+
+  assert.equal(snapshot.messages.length, 3)
+  assert.equal(snapshot.spans.length, 4)
+  assert.equal(snapshot.spans[1].spanKind, 'text')
+  assert.equal(snapshot.spans[2].spanKind, 'tool_call')
+  assert.equal(snapshot.spans[2].toolName, 'read')
+  assert.deepEqual(snapshot.spans[2].paths, ['README.md'])
+  assert.equal(snapshot.spans[3].spanKind, 'tool_result')
+  assert.equal(snapshot.spans[3].toolName, 'read')
+  assert.deepEqual(snapshot.spans[3].paths, ['README.md'])
 })
 
 test('appendRequestTelemetryArtifacts writes request and span JSONL files', async () => {
@@ -408,6 +491,80 @@ test('request telemetry extension records provider-request-scoped rows', async (
   assert.equal(spanRows.length, 2)
   assert.ok(hookRows.some((row) => row.type === 'before_provider_request' && row.requestId === requestRows[0].requestId))
   assert.ok(hookRows.some((row) => row.type === 'turn_end' && row.requestId === requestRows[0].requestId))
+})
+
+test('request telemetry extension prefers richer context when provider payload lacks tool attribution', async () => {
+  const cwd = await makeTempDir()
+  const pi = createMockPi()
+  const install = createRequestTelemetryExtension({ cwd })
+
+  install(pi)
+
+  await pi.emit('session_start')
+  await pi.emit('model_select', { model: 'local/dev-model' })
+  await pi.emit('turn_start', {
+    turnIndex: 2,
+    timestamp: Date.parse('2026-04-17T12:05:00.000Z'),
+  })
+  await pi.emit('context', {
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'Inspect README.md' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'README.md' } },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'read',
+        details: { path: 'README.md' },
+        content: [{ type: 'text', text: '# README' }],
+      },
+    ],
+  })
+  await pi.emit('before_provider_request', {
+    payload: {
+      model: 'local/dev-model',
+      messages: [
+        { role: 'user', content: 'Inspect README.md' },
+        { role: 'tool', content: '# README' },
+      ],
+    },
+  })
+  await pi.emit('message_end', {
+    message: {
+      role: 'assistant',
+      provider: 'local',
+      model: 'local/dev-model',
+      api: 'openai-completions',
+      stopReason: 'stop',
+      usage: {
+        input: 10,
+        output: 5,
+        totalTokens: 15,
+      },
+      content: [{ type: 'text', text: 'Done' }],
+    },
+  })
+  await pi.emit('turn_end', {
+    turnIndex: 2,
+    message: { stopReason: 'stop' },
+  })
+
+  const paths = getRequestTelemetryPaths({ cwd })
+  const requestsRaw = await fs.readFile(paths.requestsFile, 'utf8')
+  const spansRaw = await fs.readFile(paths.spansFile, 'utf8')
+  const requestRows = requestsRaw.trim().split('\n').map((line) => JSON.parse(line))
+  const spanRows = spansRaw.trim().split('\n').map((line) => JSON.parse(line))
+
+  assert.equal(requestRows.length, 1)
+  assert.equal(requestRows[0].spanSource, 'context')
+  assert.deepEqual(requestRows[0].toolNames, ['read'])
+  assert.deepEqual(requestRows[0].files, ['README.md'])
+  assert.ok(spanRows.some((row) => row.spanKind === 'tool_call'))
+  assert.ok(spanRows.some((row) => row.spanKind === 'tool_result'))
 })
 
 test('deriveRequestTelemetryBreakdown uses exact request totals and file-aware prompt-span allocation', () => {

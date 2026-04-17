@@ -427,6 +427,84 @@ function parseStructuredTextArray(items) {
   return parts
 }
 
+function normalizeProviderToolCalls(toolCalls) {
+  if (!Array.isArray(toolCalls)) {
+    return []
+  }
+
+  const parts = []
+  for (const item of toolCalls) {
+    const object = asObject(item)
+    const functionObject = asObject(object.function)
+    const id = normalizeString(object.id ?? object.call_id, '')
+    const name = normalizeString(
+      functionObject.name
+      ?? object.name,
+      ''
+    )
+    const argumentsValue = parseJsonLikeString(
+      functionObject.arguments
+      ?? object.arguments
+    )
+
+    if (name === '' && id === '' && argumentsValue === undefined) {
+      continue
+    }
+
+    parts.push({
+      type: 'toolCall',
+      id,
+      name,
+      arguments: argumentsValue,
+    })
+  }
+
+  return parts
+}
+
+function normalizeMessageContent(content) {
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }]
+  }
+
+  if (Array.isArray(content)) {
+    return parseStructuredTextArray(content)
+  }
+
+  return []
+}
+
+function normalizeProviderRoleMessage(object) {
+  const role = normalizeString(object.role, '')
+  if (role === '') {
+    return null
+  }
+
+  if (role === 'tool') {
+    return {
+      role: 'toolResult',
+      toolCallId: normalizeString(object.tool_call_id ?? object.call_id ?? object.id, ''),
+      toolName: normalizeString(object.name, ''),
+      details: object,
+      content: [{
+        type: 'text',
+        text: typeof object.content === 'string' ? object.content : safeJson(object.content),
+      }],
+    }
+  }
+
+  const content = normalizeMessageContent(object.content)
+  const toolCalls = normalizeProviderToolCalls(object.tool_calls)
+
+  return {
+    role,
+    content: [...content, ...toolCalls],
+    toolCallId: normalizeString(object.toolCallId ?? object.tool_call_id ?? object.call_id, ''),
+    toolName: normalizeString(object.toolName ?? object.name, ''),
+    details: object.details,
+  }
+}
+
 function convertProviderInputItemToMessage(item) {
   const object = asObject(item)
 
@@ -470,20 +548,7 @@ function convertProviderInputItemToMessage(item) {
   }
 
   if (object.role) {
-    if (typeof object.content === 'string') {
-      return {
-        role: normalizeString(object.role, ''),
-        content: [{ type: 'text', text: object.content }],
-      }
-    }
-
-    return {
-      role: normalizeString(object.role, ''),
-      content: parseStructuredTextArray(object.content),
-      toolCallId: normalizeString(object.toolCallId, ''),
-      toolName: normalizeString(object.toolName, ''),
-      details: object.details,
-    }
+    return normalizeProviderRoleMessage(object)
   }
 
   const normalized = normalizeTextPart(object)
@@ -505,6 +570,22 @@ export function extractMessagesFromProviderPayload(payload) {
 
   if (Array.isArray(object.messages)) {
     return object.messages
+      .map((item) => {
+        if (typeof item === 'string') {
+          return {
+            role: 'user',
+            content: [{ type: 'text', text: item }],
+          }
+        }
+        if (!item || typeof item !== 'object') {
+          return null
+        }
+        if (item.role) {
+          return normalizeProviderRoleMessage(asObject(item))
+        }
+        return convertProviderInputItemToMessage(item)
+      })
+      .filter((message) => normalizeString(message?.role, '') !== '')
   }
 
   if (typeof object.input === 'string') {

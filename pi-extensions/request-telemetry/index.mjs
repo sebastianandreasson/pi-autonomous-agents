@@ -118,6 +118,55 @@ function mergeSpanSummary(requestState) {
   }
 }
 
+function getSpanSignal(requestState) {
+  const spans = Array.isArray(requestState?.spans) ? requestState.spans : []
+  let toolSpanCount = 0
+
+  for (const span of spans) {
+    const kind = String(span?.spanKind ?? '').trim()
+    if (kind === 'tool_call' || kind === 'tool_result') {
+      toolSpanCount += 1
+    }
+  }
+
+  return {
+    spanCount: spans.length,
+    toolSpanCount,
+    toolNameCount: requestState?.toolNames?.size ?? 0,
+    fileCount: requestState?.files?.size ?? 0,
+  }
+}
+
+function shouldPreferSnapshot(currentState, candidateState) {
+  const current = getSpanSignal(currentState)
+  const candidate = getSpanSignal(candidateState)
+
+  const currentHasToolContext = current.toolSpanCount > 0 || current.toolNameCount > 0 || current.fileCount > 0
+  const candidateHasToolContext = candidate.toolSpanCount > 0 || candidate.toolNameCount > 0 || candidate.fileCount > 0
+
+  if (candidateHasToolContext && !currentHasToolContext) {
+    return true
+  }
+
+  if (candidate.fileCount !== current.fileCount) {
+    return candidate.fileCount > current.fileCount
+  }
+
+  if (candidate.toolSpanCount !== current.toolSpanCount) {
+    return candidate.toolSpanCount > current.toolSpanCount
+  }
+
+  if (candidate.toolNameCount !== current.toolNameCount) {
+    return candidate.toolNameCount > current.toolNameCount
+  }
+
+  if (current.spanCount === 0 && candidate.spanCount > 0) {
+    return true
+  }
+
+  return false
+}
+
 function applyAssistantMessage(requestState, message) {
   requestState.provider = String(message?.provider ?? requestState.provider ?? '').trim()
   requestState.model = String(message?.model ?? requestState.model ?? '').trim()
@@ -289,6 +338,23 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
     })
   }
 
+  function createComparableRequestState(baseState) {
+    return createRequestState({
+      sessionId: baseState.sessionId,
+      turnIndex: baseState.turnIndex,
+      startedAt: baseState.startedAt,
+      model: baseState.model,
+      metadata: {
+        runId: baseState.runId,
+        iteration: baseState.iteration,
+        phase: baseState.phase,
+        role: baseState.role,
+        kind: baseState.kind,
+        task: baseState.task,
+      },
+    })
+  }
+
   function createFallbackRequest() {
     const requestState = createProviderRequest()
 
@@ -417,7 +483,37 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
 
     pi.on('before_provider_request', (event) => {
       const requestState = createProviderRequest()
-      if (!applyProviderPayloadSnapshot(requestState, event?.payload) && !applyContextSnapshot(requestState)) {
+      const providerApplied = applyProviderPayloadSnapshot(requestState, event?.payload)
+
+      const contextCandidate = createComparableRequestState(requestState)
+      const contextApplied = applyContextSnapshot(contextCandidate)
+      if (contextApplied && shouldPreferSnapshot(requestState, contextCandidate)) {
+        requestState.contextMessages = contextCandidate.contextMessages
+        requestState.spans = contextCandidate.spans
+        requestState.spanSource = contextCandidate.spanSource
+        requestState.contextMessageCount = contextCandidate.contextMessageCount
+        requestState.spanCount = contextCandidate.spanCount
+        requestState.textChars = contextCandidate.textChars
+        requestState.textBytes = contextCandidate.textBytes
+        requestState.toolNames = contextCandidate.toolNames
+        requestState.files = contextCandidate.files
+      }
+
+      const sessionHistoryCandidate = createComparableRequestState(requestState)
+      const sessionHistoryApplied = applySessionHistorySnapshot(sessionHistoryCandidate)
+      if (sessionHistoryApplied && shouldPreferSnapshot(requestState, sessionHistoryCandidate)) {
+        requestState.contextMessages = sessionHistoryCandidate.contextMessages
+        requestState.spans = sessionHistoryCandidate.spans
+        requestState.spanSource = sessionHistoryCandidate.spanSource
+        requestState.contextMessageCount = sessionHistoryCandidate.contextMessageCount
+        requestState.spanCount = sessionHistoryCandidate.spanCount
+        requestState.textChars = sessionHistoryCandidate.textChars
+        requestState.textBytes = sessionHistoryCandidate.textBytes
+        requestState.toolNames = sessionHistoryCandidate.toolNames
+        requestState.files = sessionHistoryCandidate.files
+      }
+
+      if (!providerApplied && requestState.spans.length === 0 && !contextApplied && !sessionHistoryApplied) {
         applySessionHistorySnapshot(requestState)
       }
       state.pendingRequests.push(requestState)

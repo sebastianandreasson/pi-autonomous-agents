@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -44,6 +45,9 @@ function createFakePi({
     sessionFile: '/tmp/sdk-session-1.jsonl',
     model: models[0],
     messages: [],
+    agent: {
+      signal: new AbortController().signal,
+    },
     _listener: null,
     _disposed: false,
     _aborts: 0,
@@ -413,4 +417,30 @@ test('runSdkTurnWithPi falls back to assistant message usage when token_usage ev
   assert.equal(liveEvents.find((event) => event.type === 'token_usage')?.attributionKind, 'turn_fallback')
   assert.deepEqual(liveEvents.find((event) => event.type === 'token_usage')?.toolNames ?? [], [])
   assert.deepEqual(liveEvents.find((event) => event.type === 'token_usage')?.files ?? [], [])
+})
+
+test('runSdkTurnWithPi relaxes the active abort signal listener cap', async () => {
+  const pi = createFakePi()
+
+  await runSdkTurnWithPi(pi, {
+    cwd: '/repo',
+    runtimeDir: '/repo/.pi-runtime/run-1',
+    prompt: 'do work',
+    model: 'local/dev-model',
+    tools: 'read',
+    requestTelemetryEnabled: false,
+    noThemes: true,
+  })
+
+  const warningPromise = Promise.race([
+    once(process, 'warning').then(([warning]) => warning),
+    new Promise((resolve) => setTimeout(() => resolve(null), 25)),
+  ])
+
+  for (let index = 0; index < 11; index += 1) {
+    pi._session.agent.signal.addEventListener('abort', () => {})
+  }
+
+  const warning = await warningPromise
+  assert.equal(warning, null)
 })

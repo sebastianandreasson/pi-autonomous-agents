@@ -1,5 +1,6 @@
 import path from 'node:path'
 import process from 'node:process'
+import { setMaxListeners } from 'node:events'
 import { pathToFileURL } from 'node:url'
 import {
   formatHeartbeatReason,
@@ -152,6 +153,16 @@ function applyRequestTelemetryEnv(request) {
       process.env[key] = previousValue
     }
   }
+}
+
+function relaxAbortSignalListenerLimit(signal) {
+  if (!signal || typeof signal !== 'object') {
+    return
+  }
+
+  try {
+    setMaxListeners(0, signal)
+  } catch {}
 }
 
 function deriveTokenAttributionKind({ activeToolName, pendingToolNames, pendingFiles, lastAssistantActivity }) {
@@ -484,6 +495,7 @@ export async function runSdkTurnWithPi(pi, request) {
   let tokenUsageEvents = 0
   let tokenUsage = createEmptyTokenUsage()
   let lastAssistantActivity = ''
+  let abortSignalLimitRelaxed = false
   const pendingToolNames = new Set()
   const pendingFiles = new Set()
   const events = []
@@ -569,6 +581,10 @@ export async function runSdkTurnWithPi(pi, request) {
       lastEventAt = Date.now()
 
       if (event.type === 'agent_start') {
+        if (!abortSignalLimitRelaxed) {
+          relaxAbortSignalListenerLimit(session?.agent?.signal)
+          abortSignalLimitRelaxed = true
+        }
         agentStarted = true
         emitLiveFeed(request, {
           type: 'agent_start',
