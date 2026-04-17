@@ -4,9 +4,12 @@ This is a repo-local Pi extension prototype for capturing lower-level request te
 
 It writes:
 
-- `pi-output/request-telemetry/hooks.jsonl`
 - `pi-output/request-telemetry/requests.jsonl`
 - `pi-output/request-telemetry/spans.jsonl`
+
+Optional when debug tracing is enabled:
+
+- `pi-output/request-telemetry/hooks.jsonl`
 
 The goal is to capture exact request boundaries and exact prompt composition before deciding whether we need to patch `pi-mono` itself.
 
@@ -20,11 +23,15 @@ The goal is to capture exact request boundaries and exact prompt composition bef
 - provider payload summary from `before_provider_request`
 - response status and headers from `after_provider_response`
 - final assistant-message usage if Pi exposes it on `message.usage`
-- lifecycle hook traces in `hooks.jsonl` so you can debug request association
 - `spanSource` on each request so consumers can distinguish:
   - `provider_payload`
   - `context`
   - `session_history`
+
+Default storage is compact:
+
+- `spans.jsonl` keeps attribution metadata and byte counts, not full prompt text
+- `hooks.jsonl` is off by default because it is mainly for telemetry debugging
 
 ## What It Does Not Claim Yet
 
@@ -49,6 +56,13 @@ Disable that path with:
 
 - `PI_REQUEST_TELEMETRY_ENABLED=0`
 - `"piRequestTelemetryEnabled": false` in `pi.config.json`
+
+Enable deeper telemetry capture only when needed:
+
+- `PI_REQUEST_TELEMETRY_STORE_HOOKS=1`
+- `"piRequestTelemetryStoreHooks": true`
+- `PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT=1`
+- `"piRequestTelemetryStoreSpanText": true`
 
 ## Running It From This Repo
 

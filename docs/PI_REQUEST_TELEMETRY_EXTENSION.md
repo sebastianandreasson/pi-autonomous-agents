@@ -4,13 +4,27 @@ This document describes the repo-local Pi extension prototype under [pi-extensio
 
 In normal `pi-harness` SDK runs, this extension is auto-enabled by installing a managed extension package under `.pi/extensions/pi-harness-request-telemetry/` in the consuming repo before Pi reloads resources. That package contains a `package.json` Pi manifest plus the generated `index.mjs` shim. Opt out with `PI_REQUEST_TELEMETRY_ENABLED=0` or `"piRequestTelemetryEnabled": false`.
 
+The default storage mode is compact:
+
+- `requests.jsonl` is always kept
+- `spans.jsonl` keeps attribution metadata and byte counts, but not full prompt text
+- `hooks.jsonl` is disabled by default
+
+Enable deeper debug capture only when needed:
+
+- `PI_REQUEST_TELEMETRY_STORE_HOOKS=1` or `"piRequestTelemetryStoreHooks": true`
+- `PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT=1` or `"piRequestTelemetryStoreSpanText": true`
+
 The purpose of this extension is to gather request-level data directly from Pi extension hooks before we decide whether to patch `@mariozechner/pi-coding-agent` or `pi-ai`.
 
 ## Produced Artifacts
 
-- `pi-output/request-telemetry/hooks.jsonl`
 - `pi-output/request-telemetry/requests.jsonl`
 - `pi-output/request-telemetry/spans.jsonl`
+
+Optional when hook tracing is enabled:
+
+- `pi-output/request-telemetry/hooks.jsonl`
 
 These artifacts are intentionally separate from the existing `pi-output/token-usage/*` files.
 
@@ -109,7 +123,7 @@ Interpretation:
 - `message_end`
 - `turn_end`
 
-Use it to debug request association problems or confirm whether Pi emitted provider-boundary hooks for a specific run.
+Use it to debug request association problems or confirm whether Pi emitted provider-boundary hooks for a specific run. This file is off by default because it grows quickly and is only useful for telemetry debugging.
 
 ## Span Artifact Schema
 
@@ -131,6 +145,9 @@ Each row in `spans.jsonl` contains one extracted prompt span:
 - `primaryPath`
 - `charCount`
 - `byteCount`
+
+Optional only when raw span text capture is enabled:
+
 - `text`
 - `preview`
 

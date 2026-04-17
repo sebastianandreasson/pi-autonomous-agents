@@ -12,6 +12,10 @@ export const REQUEST_TELEMETRY_ENV_KEYS = Object.freeze({
   kind: 'PI_REQUEST_KIND',
   task: 'PI_REQUEST_TASK',
 })
+export const REQUEST_TELEMETRY_STORAGE_ENV_KEYS = Object.freeze({
+  storeHooks: 'PI_REQUEST_TELEMETRY_STORE_HOOKS',
+  storeSpanText: 'PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT',
+})
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const packageRoot = path.resolve(scriptDir, '..')
@@ -92,6 +96,24 @@ function isoFromValue(value) {
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+function parseBooleanFlag(value, fallback = false) {
+  if (value === undefined || value === null || value === '') {
+    return fallback
+  }
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') {
+    return false
+  }
+  return fallback
 }
 
 function createBucketMap() {
@@ -276,6 +298,13 @@ export function readRequestTelemetryContextFromEnv(env = process.env) {
     role: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.role], ''),
     kind: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.kind], ''),
     task: normalizeString(env?.[REQUEST_TELEMETRY_ENV_KEYS.task], ''),
+  }
+}
+
+export function readRequestTelemetryStorageOptionsFromEnv(env = process.env) {
+  return {
+    storeHooks: parseBooleanFlag(env?.[REQUEST_TELEMETRY_STORAGE_ENV_KEYS.storeHooks], false),
+    storeSpanText: parseBooleanFlag(env?.[REQUEST_TELEMETRY_STORAGE_ENV_KEYS.storeSpanText], false),
   }
 }
 
@@ -643,6 +672,17 @@ export function normalizeRequestSpanRecord(record) {
   }
 }
 
+export function compactRequestSpanRecord(record, { includeText = false, includePreview = false } = {}) {
+  const normalized = normalizeRequestSpanRecord(record)
+  if (!includeText) {
+    delete normalized.text
+  }
+  if (!includeText || !includePreview) {
+    delete normalized.preview
+  }
+  return normalized
+}
+
 export function createEmptyRequestTelemetryBreakdown() {
   return createEmptyBreakdownShape('request_telemetry')
 }
@@ -803,6 +843,84 @@ export function collectProviderPayloadSpans({
       timestamp,
     }),
   }
+}
+
+function joinToolContentText(content = []) {
+  if (!Array.isArray(content)) {
+    return ''
+  }
+
+  return content
+    .map((item) => {
+      const object = asObject(item)
+      if (normalizeString(object.type, '') === 'text') {
+        return String(object.text ?? '')
+      }
+      return ''
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+export function collectToolHookSpans({
+  requestId = '',
+  sessionId = '',
+  turnIndex = 0,
+  toolEvents = [],
+  timestamp = now(),
+} = {}) {
+  const spans = []
+
+  for (let index = 0; index < (Array.isArray(toolEvents) ? toolEvents.length : 0); index += 1) {
+    const event = asObject(toolEvents[index])
+    const toolCallId = normalizeString(event.toolCallId, '')
+    const toolName = normalizeString(event.toolName, '')
+    const args = parseJsonLikeString(event.args ?? event.input)
+    const details = parseJsonLikeString(event.details)
+    const contentText = joinToolContentText(event.content)
+    const detailText = safeJson(details)
+    const resultText = [contentText, detailText].filter(Boolean).join('\n')
+    const paths = normalizeStringList([
+      ...deriveToolPaths(toolName, args),
+      ...deriveToolPaths(toolName, details),
+    ])
+    const base = createSpanBase({
+      requestId,
+      sessionId,
+      turnIndex,
+      timestamp: event.timestamp ?? timestamp,
+      role: 'toolResult',
+      messageIndex: index,
+      spanIndex: 0,
+      source: 'tool_hooks',
+    })
+
+    if (args !== undefined) {
+      spans.push(createTextSpan(base, {
+        spanIndex: 0,
+        spanKind: 'tool_call',
+        toolCallId,
+        toolName,
+        paths,
+        primaryPath: paths[0] ?? '',
+        text: safeJson(args),
+      }))
+    }
+
+    if (resultText !== '' || details !== undefined || Array.isArray(event.content)) {
+      spans.push(createTextSpan(base, {
+        spanIndex: args !== undefined ? 1 : 0,
+        spanKind: 'tool_result',
+        toolCallId,
+        toolName,
+        paths,
+        primaryPath: paths[0] ?? '',
+        text: resultText,
+      }))
+    }
+  }
+
+  return spans
 }
 
 export function summarizeRequestSpans(spans = []) {
@@ -996,12 +1114,14 @@ async function readJsonlRecords(filePath, normalize) {
   }
 }
 
-export async function ensureRequestTelemetryFiles(paths) {
-  const hooksFile = String(paths?.hooksFile ?? '').trim()
-  const requestsFile = String(paths?.requestsFile ?? '').trim()
-  const spansFile = String(paths?.spansFile ?? '').trim()
+export async function ensureRequestTelemetryFiles(paths, options = {}) {
+  const targets = [
+    options?.includeHooks === true ? String(paths?.hooksFile ?? '').trim() : '',
+    options?.includeRequests !== false ? String(paths?.requestsFile ?? '').trim() : '',
+    options?.includeSpans !== false ? String(paths?.spansFile ?? '').trim() : '',
+  ]
 
-  for (const filePath of [hooksFile, requestsFile, spansFile]) {
+  for (const filePath of targets) {
     if (filePath === '') {
       continue
     }
@@ -1033,16 +1153,28 @@ export async function appendRequestTelemetryHook(paths, event) {
     detail: asObject(event?.detail),
   }
 
-  await ensureRequestTelemetryFiles(paths)
+  await ensureRequestTelemetryFiles(paths, {
+    includeHooks: true,
+    includeRequests: false,
+    includeSpans: false,
+  })
   await fs.appendFile(hooksFile, `${JSON.stringify(normalizedEvent)}\n`, 'utf8')
   return normalizedEvent
 }
 
-export async function appendRequestTelemetryArtifacts(paths, { request, spans = [] } = {}) {
+export async function appendRequestTelemetryArtifacts(paths, { request, spans = [] } = {}, options = {}) {
   const normalizedRequest = normalizeRequestTelemetryRecord(request)
-  const normalizedSpans = (Array.isArray(spans) ? spans : []).map((span) => normalizeRequestSpanRecord(span))
+  const normalizedSpans = (Array.isArray(spans) ? spans : [])
+    .map((span) => compactRequestSpanRecord(span, {
+      includeText: options?.includeSpanText === true,
+      includePreview: options?.includeSpanPreview === true,
+    }))
 
-  await ensureRequestTelemetryFiles(paths)
+  await ensureRequestTelemetryFiles(paths, {
+    includeHooks: false,
+    includeRequests: String(paths?.requestsFile ?? '').trim() !== '',
+    includeSpans: String(paths?.spansFile ?? '').trim() !== '' && normalizedSpans.length > 0,
+  })
 
   if (String(paths?.requestsFile ?? '').trim() !== '') {
     await fs.appendFile(paths.requestsFile, `${JSON.stringify(normalizedRequest)}\n`, 'utf8')

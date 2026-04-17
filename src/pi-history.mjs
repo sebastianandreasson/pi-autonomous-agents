@@ -24,6 +24,7 @@ export function collectHistoryTargets(config) {
     config.lastIterationSummaryFile,
     config.tokenUsageEventsFile,
     config.tokenUsageSummaryFile,
+    path.join(config.cwd, 'pi-output/request-telemetry'),
     config.piRuntimeDir,
     config.visualFeedbackFile,
     config.testerFeedbackFile,

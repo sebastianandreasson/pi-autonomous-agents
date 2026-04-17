@@ -266,6 +266,8 @@ export function loadConfig(mode = 'once') {
     piThinking: readString('PI_THINKING', file.piThinking, ''),
     piNoExtensions: readBool('PI_NO_EXTENSIONS', file.piNoExtensions, false),
     piRequestTelemetryEnabled: readBool('PI_REQUEST_TELEMETRY_ENABLED', file.piRequestTelemetryEnabled, true),
+    piRequestTelemetryStoreHooks: readBool('PI_REQUEST_TELEMETRY_STORE_HOOKS', file.piRequestTelemetryStoreHooks, false),
+    piRequestTelemetryStoreSpanText: readBool('PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT', file.piRequestTelemetryStoreSpanText, false),
     piNoSkills: readBool('PI_NO_SKILLS', file.piNoSkills, false),
     piNoPromptTemplates: readBool('PI_NO_PROMPT_TEMPLATES', file.piNoPromptTemplates, false),
     piNoThemes: readBool('PI_NO_THEMES', file.piNoThemes, true),

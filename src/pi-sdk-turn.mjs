@@ -16,6 +16,7 @@ import {
 } from './pi-token-analysis.mjs'
 import {
   REQUEST_TELEMETRY_ENV_KEYS,
+  REQUEST_TELEMETRY_STORAGE_ENV_KEYS,
   ensureBundledRequestTelemetryExtension,
   readRequestTelemetryContextFromEnv,
 } from './pi-request-telemetry.mjs'
@@ -124,6 +125,10 @@ function addTokenUsage(total, value) {
 
 function applyRequestTelemetryEnv(request) {
   const previous = readRequestTelemetryContextFromEnv()
+  const previousStorage = {
+    storeHooks: String(process.env[REQUEST_TELEMETRY_STORAGE_ENV_KEYS.storeHooks] ?? '').trim(),
+    storeSpanText: String(process.env[REQUEST_TELEMETRY_STORAGE_ENV_KEYS.storeSpanText] ?? '').trim(),
+  }
   const nextValues = {
     [REQUEST_TELEMETRY_ENV_KEYS.runId]: String(process.env.PI_RUN_ID ?? '').trim(),
     [REQUEST_TELEMETRY_ENV_KEYS.iteration]: Number.isFinite(Number(request?.metadata?.iteration))
@@ -133,6 +138,8 @@ function applyRequestTelemetryEnv(request) {
     [REQUEST_TELEMETRY_ENV_KEYS.role]: String(request?.role ?? '').trim(),
     [REQUEST_TELEMETRY_ENV_KEYS.kind]: String(request?.kind ?? '').trim(),
     [REQUEST_TELEMETRY_ENV_KEYS.task]: String(request?.task ?? '').trim(),
+    [REQUEST_TELEMETRY_STORAGE_ENV_KEYS.storeHooks]: request?.requestTelemetryStoreHooks === true ? '1' : '0',
+    [REQUEST_TELEMETRY_STORAGE_ENV_KEYS.storeSpanText]: request?.requestTelemetryStoreSpanText === true ? '1' : '0',
   }
 
   for (const [key, value] of Object.entries(nextValues)) {
@@ -146,6 +153,15 @@ function applyRequestTelemetryEnv(request) {
   return () => {
     for (const [field, key] of Object.entries(REQUEST_TELEMETRY_ENV_KEYS)) {
       const previousValue = String(previous?.[field] ?? '').trim()
+      if (previousValue === '') {
+        delete process.env[key]
+        continue
+      }
+      process.env[key] = previousValue
+    }
+
+    for (const [field, key] of Object.entries(REQUEST_TELEMETRY_STORAGE_ENV_KEYS)) {
+      const previousValue = String(previousStorage?.[field] ?? '').trim()
       if (previousValue === '') {
         delete process.env[key]
         continue

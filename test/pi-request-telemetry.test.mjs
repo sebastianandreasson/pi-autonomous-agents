@@ -10,6 +10,7 @@ import {
   appendRequestTelemetryArtifacts,
   collectMessageSpans,
   collectProviderPayloadSpans,
+  collectToolHookSpans,
   createEmptyRequestTelemetryBreakdown,
   deriveRequestTelemetryAnalytics,
   deriveRequestTelemetryBreakdown,
@@ -339,7 +340,31 @@ test('collectProviderPayloadSpans handles chat-completions style tool calls and 
   assert.deepEqual(snapshot.spans[3].paths, ['README.md'])
 })
 
-test('appendRequestTelemetryArtifacts writes request and span JSONL files', async () => {
+test('collectToolHookSpans derives tool and file context from Pi tool hooks', () => {
+  const spans = collectToolHookSpans({
+    requestId: 'req-hook-1',
+    sessionId: 'session-1',
+    turnIndex: 2,
+    toolEvents: [
+      {
+        toolCallId: 'call-1',
+        toolName: 'read',
+        args: { path: 'README.md' },
+        details: { path: 'README.md' },
+        content: [{ type: 'text', text: '# README' }],
+      },
+    ],
+  })
+
+  assert.equal(spans.length, 2)
+  assert.equal(spans[0].spanKind, 'tool_call')
+  assert.equal(spans[1].spanKind, 'tool_result')
+  assert.equal(spans[0].source, 'tool_hooks')
+  assert.equal(spans[1].toolName, 'read')
+  assert.deepEqual(spans[1].paths, ['README.md'])
+})
+
+test('appendRequestTelemetryArtifacts writes compact span JSONL files by default', async () => {
   const cwd = await makeTempDir()
   const paths = getRequestTelemetryPaths({ cwd })
 
@@ -388,6 +413,37 @@ test('appendRequestTelemetryArtifacts writes request and span JSONL files', asyn
   assert.equal(requestRows[0].spanSource, '')
   assert.deepEqual(requestRows[0].files, ['src/a.ts'])
   assert.equal(spanRows[0].spanKind, 'text')
+  assert.equal('text' in spanRows[0], false)
+  assert.equal('preview' in spanRows[0], false)
+})
+
+test('appendRequestTelemetryArtifacts can keep raw span text when explicitly enabled', async () => {
+  const cwd = await makeTempDir()
+  const paths = getRequestTelemetryPaths({ cwd })
+
+  await appendRequestTelemetryArtifacts(paths, {
+    request: {
+      requestId: 'req-1',
+      sessionId: 'session-1',
+      totalTokens: 1,
+    },
+    spans: [
+      {
+        requestId: 'req-1',
+        sessionId: 'session-1',
+        role: 'user',
+        spanKind: 'text',
+        text: 'Fix src/a.ts',
+      },
+    ],
+  }, {
+    includeSpanText: true,
+  })
+
+  const spansRaw = await fs.readFile(paths.spansFile, 'utf8')
+  const spanRows = spansRaw.trim().split('\n').map((line) => JSON.parse(line))
+
+  assert.equal(spanRows[0].text, 'Fix src/a.ts')
 })
 
 test('appendRequestTelemetryHook writes hook trace JSONL rows', async () => {
@@ -473,10 +529,8 @@ test('request telemetry extension records provider-request-scoped rows', async (
   const paths = getRequestTelemetryPaths({ cwd })
   const requestsRaw = await fs.readFile(paths.requestsFile, 'utf8')
   const spansRaw = await fs.readFile(paths.spansFile, 'utf8')
-  const hooksRaw = await fs.readFile(paths.hooksFile, 'utf8')
   const requestRows = requestsRaw.trim().split('\n').map((line) => JSON.parse(line))
   const spanRows = spansRaw.trim().split('\n').map((line) => JSON.parse(line))
-  const hookRows = hooksRaw.trim().split('\n').map((line) => JSON.parse(line))
 
   assert.equal(requestRows.length, 1)
   assert.equal(requestRows[0].turnIndex, 1)
@@ -489,8 +543,71 @@ test('request telemetry extension records provider-request-scoped rows', async (
   assert.equal(requestRows[0].outputTokens, 3)
   assert.equal(requestRows[0].totalTokens, 13)
   assert.equal(spanRows.length, 2)
-  assert.ok(hookRows.some((row) => row.type === 'before_provider_request' && row.requestId === requestRows[0].requestId))
-  assert.ok(hookRows.some((row) => row.type === 'turn_end' && row.requestId === requestRows[0].requestId))
+  assert.equal(await pathExists(paths.hooksFile), false)
+  assert.equal('text' in spanRows[0], false)
+})
+
+test('request telemetry extension can opt into hook traces and raw span text', async () => {
+  const cwd = await makeTempDir()
+  const pi = createMockPi()
+  const previousStoreHooks = process.env.PI_REQUEST_TELEMETRY_STORE_HOOKS
+  const previousStoreSpanText = process.env.PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT
+  process.env.PI_REQUEST_TELEMETRY_STORE_HOOKS = '1'
+  process.env.PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT = '1'
+
+  try {
+    const install = createRequestTelemetryExtension({ cwd })
+    install(pi)
+
+    await pi.emit('session_start')
+    await pi.emit('turn_start', {
+      turnIndex: 1,
+      timestamp: Date.parse('2026-04-17T12:00:00.000Z'),
+    })
+    await pi.emit('before_provider_request', {
+      payload: {
+        model: 'local/dev-model',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'Explain README.md' }] },
+        ],
+      },
+    })
+    await pi.emit('message_end', {
+      message: {
+        role: 'assistant',
+        usage: {
+          input: 2,
+          output: 1,
+          totalTokens: 3,
+        },
+        content: [{ type: 'text', text: 'Done' }],
+      },
+    })
+    await pi.emit('turn_end', {
+      turnIndex: 1,
+      message: { stopReason: 'stop' },
+    })
+
+    const paths = getRequestTelemetryPaths({ cwd })
+    const hooksRaw = await fs.readFile(paths.hooksFile, 'utf8')
+    const spansRaw = await fs.readFile(paths.spansFile, 'utf8')
+    const hookRows = hooksRaw.trim().split('\n').map((line) => JSON.parse(line))
+    const spanRows = spansRaw.trim().split('\n').map((line) => JSON.parse(line))
+
+    assert.ok(hookRows.some((row) => row.type === 'before_provider_request'))
+    assert.equal(spanRows[0].text, 'Explain README.md')
+  } finally {
+    if (previousStoreHooks === undefined) {
+      delete process.env.PI_REQUEST_TELEMETRY_STORE_HOOKS
+    } else {
+      process.env.PI_REQUEST_TELEMETRY_STORE_HOOKS = previousStoreHooks
+    }
+    if (previousStoreSpanText === undefined) {
+      delete process.env.PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT
+    } else {
+      process.env.PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT = previousStoreSpanText
+    }
+  }
 })
 
 test('request telemetry extension prefers richer context when provider payload lacks tool attribution', async () => {
@@ -565,6 +682,76 @@ test('request telemetry extension prefers richer context when provider payload l
   assert.deepEqual(requestRows[0].files, ['README.md'])
   assert.ok(spanRows.some((row) => row.spanKind === 'tool_call'))
   assert.ok(spanRows.some((row) => row.spanKind === 'tool_result'))
+})
+
+test('request telemetry extension falls back to tool hooks when provider payload is sparse', async () => {
+  const cwd = await makeTempDir()
+  const pi = createMockPi()
+  const install = createRequestTelemetryExtension({ cwd })
+
+  install(pi)
+
+  await pi.emit('session_start')
+  await pi.emit('model_select', { model: 'local/dev-model' })
+  await pi.emit('turn_start', {
+    turnIndex: 1,
+    timestamp: Date.parse('2026-04-17T12:00:00.000Z'),
+  })
+  await pi.emit('tool_execution_start', {
+    toolCallId: 'call-1',
+    toolName: 'read',
+    args: { path: 'README.md' },
+  })
+  await pi.emit('tool_result', {
+    toolCallId: 'call-1',
+    toolName: 'read',
+    input: { path: 'README.md' },
+    content: [{ type: 'text', text: '# README' }],
+    details: { path: 'README.md' },
+    isError: false,
+  })
+  await pi.emit('before_provider_request', {
+    payload: {
+      model: 'qwen',
+      messages: [
+        { role: 'system', content: 'You are helpful.' },
+        { role: 'user', content: 'Explain the repo.' },
+      ],
+      tools: [{ type: 'function', function: { name: 'read' } }],
+    },
+  })
+  await pi.emit('message_end', {
+    message: {
+      role: 'assistant',
+      provider: 'local',
+      model: 'qwen',
+      api: 'openai-completions',
+      stopReason: 'toolUse',
+      usage: {
+        input: 10,
+        output: 5,
+        totalTokens: 15,
+      },
+      content: [{ type: 'text', text: 'Need to read the README.' }],
+    },
+  })
+  await pi.emit('turn_end', {
+    turnIndex: 1,
+    message: { stopReason: 'toolUse' },
+  })
+
+  const paths = getRequestTelemetryPaths({ cwd })
+  const requestsRaw = await fs.readFile(paths.requestsFile, 'utf8')
+  const spansRaw = await fs.readFile(paths.spansFile, 'utf8')
+  const requestRows = requestsRaw.trim().split('\n').map((line) => JSON.parse(line))
+  const spanRows = spansRaw.trim().split('\n').map((line) => JSON.parse(line))
+
+  assert.equal(requestRows.length, 1)
+  assert.equal(requestRows[0].spanSource, 'tool_hooks')
+  assert.deepEqual(requestRows[0].toolNames, ['read'])
+  assert.deepEqual(requestRows[0].files, ['README.md'])
+  assert.ok(spanRows.some((row) => row.source === 'tool_hooks' && row.spanKind === 'tool_call'))
+  assert.ok(spanRows.some((row) => row.source === 'tool_hooks' && row.spanKind === 'tool_result'))
 })
 
 test('deriveRequestTelemetryBreakdown uses exact request totals and file-aware prompt-span allocation', () => {

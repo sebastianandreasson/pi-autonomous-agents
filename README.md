@@ -82,6 +82,14 @@ Start from [templates/pi.config.example.json](./templates/pi.config.example.json
 
 Request telemetry is enabled by default for SDK runs. `pi-harness` writes a managed Pi extension package under `.pi/extensions/pi-harness-request-telemetry/` in the consuming repo, with a `package.json` manifest and `index.mjs` shim that Pi auto-discovers on the next resource reload. Disable that with `PI_REQUEST_TELEMETRY_ENABLED=0` or `"piRequestTelemetryEnabled": false`.
 
+By default the extension now stores compact request telemetry only:
+- `requests.jsonl` with exact request totals and summarized tool/file attribution
+- `spans.jsonl` with byte counts and attribution metadata, but not full prompt text
+
+Verbose hook traces and raw span text are opt-in for debugging:
+- `PI_REQUEST_TELEMETRY_STORE_HOOKS=1` or `"piRequestTelemetryStoreHooks": true`
+- `PI_REQUEST_TELEMETRY_STORE_SPAN_TEXT=1` or `"piRequestTelemetryStoreSpanText": true`
+
 ## CLI
 
 ```bash

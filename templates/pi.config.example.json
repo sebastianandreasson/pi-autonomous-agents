@@ -9,6 +9,8 @@
   "largeSpecWarningLines": 300,
   "piModel": "local/text-model",
   "piRequestTelemetryEnabled": true,
+  "piRequestTelemetryStoreHooks": false,
+  "piRequestTelemetryStoreSpanText": false,
   "models": {
     "local/text-model": {
       "baseUrl": "http://localhost:8000/v1",

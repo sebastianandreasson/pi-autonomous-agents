@@ -43,7 +43,7 @@ test('collectHistoryTargets includes configured harness outputs', () => {
     visualCaptureDir: path.join(cwd, 'pi-output/visual-capture'),
   }
 
-  assert.equal(collectHistoryTargets(config).length, 18)
+  assert.equal(collectHistoryTargets(config).length, 19)
 })
 
 test('clearHarnessHistory removes configured state and verifies clean slate', async () => {

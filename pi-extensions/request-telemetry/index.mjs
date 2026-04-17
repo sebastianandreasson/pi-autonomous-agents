@@ -5,11 +5,13 @@ import {
   appendRequestTelemetryArtifacts,
   collectMessageSpans,
   collectProviderPayloadSpans,
+  collectToolHookSpans,
   deriveToolPaths,
   extractMessagesFromProviderPayload,
   extractUsageFromMessage,
   getRequestTelemetryPaths,
   readRequestTelemetryContextFromEnv,
+  readRequestTelemetryStorageOptionsFromEnv,
   summarizeProviderPayload,
   summarizeRequestSpans,
 } from '../../src/pi-request-telemetry.mjs'
@@ -49,6 +51,7 @@ function createTurnState({ turnIndex = 0, startedAt = '', model = '' } = {}) {
     contextMessageCount: 0,
     contextSpanCount: 0,
     lastAssistantMessage: null,
+    recentToolEvents: [],
   }
 }
 
@@ -182,6 +185,7 @@ function applyAssistantMessage(requestState, message) {
 
 export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
   const artifacts = getRequestTelemetryPaths({ cwd })
+  const storage = readRequestTelemetryStorageOptionsFromEnv()
   const state = {
     sessionId: randomUUID(),
     currentModel: '',
@@ -213,6 +217,10 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
   }
 
   function trace(type, detail = {}) {
+    if (!storage.storeHooks) {
+      return Promise.resolve()
+    }
+
     state.hookSequence += 1
     const activeRequest = getLatestPendingRequest()
     const currentTurn = state.currentTurn
@@ -326,6 +334,32 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
     return false
   }
 
+  function applyToolHookSnapshot(requestState) {
+    const currentTurn = getCurrentTurn()
+    const toolEvents = Array.isArray(currentTurn.recentToolEvents) ? currentTurn.recentToolEvents : []
+    if (toolEvents.length === 0) {
+      return false
+    }
+
+    const spans = collectToolHookSpans({
+      requestId: requestState.requestId,
+      sessionId: requestState.sessionId,
+      turnIndex: requestState.turnIndex,
+      toolEvents,
+    })
+    if (spans.length === 0) {
+      return false
+    }
+
+    applySpanSnapshot(requestState, {
+      messages: [],
+      spans,
+      source: 'tool_hooks',
+    })
+    mergeSpanSummary(requestState)
+    return true
+  }
+
   function createProviderRequest(overrides = {}) {
     const currentTurn = getCurrentTurn()
     return createRequestState({
@@ -411,6 +445,8 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
         ...requestState.usage,
       },
       spans: requestState.spans,
+    }, {
+      includeSpanText: storage.storeSpanText,
     })
   }
 
@@ -482,6 +518,7 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
     })
 
     pi.on('before_provider_request', (event) => {
+      const currentTurn = getCurrentTurn()
       const requestState = createProviderRequest()
       const providerApplied = applyProviderPayloadSnapshot(requestState, event?.payload)
 
@@ -513,10 +550,25 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
         requestState.files = sessionHistoryCandidate.files
       }
 
-      if (!providerApplied && requestState.spans.length === 0 && !contextApplied && !sessionHistoryApplied) {
+      const toolHookCandidate = createComparableRequestState(requestState)
+      const toolHookApplied = applyToolHookSnapshot(toolHookCandidate)
+      if (toolHookApplied && shouldPreferSnapshot(requestState, toolHookCandidate)) {
+        requestState.contextMessages = toolHookCandidate.contextMessages
+        requestState.spans = toolHookCandidate.spans
+        requestState.spanSource = toolHookCandidate.spanSource
+        requestState.contextMessageCount = toolHookCandidate.contextMessageCount
+        requestState.spanCount = toolHookCandidate.spanCount
+        requestState.textChars = toolHookCandidate.textChars
+        requestState.textBytes = toolHookCandidate.textBytes
+        requestState.toolNames = toolHookCandidate.toolNames
+        requestState.files = toolHookCandidate.files
+      }
+
+      if (!providerApplied && requestState.spans.length === 0 && !contextApplied && !sessionHistoryApplied && !toolHookApplied) {
         applySessionHistorySnapshot(requestState)
       }
       state.pendingRequests.push(requestState)
+      currentTurn.recentToolEvents = []
 
       void trace('before_provider_request', {
         requestId: requestState.requestId,
@@ -544,15 +596,28 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
     })
 
     pi.on('tool_execution_start', (event) => {
+      const currentTurn = getCurrentTurn()
       const toolCallId = String(event?.toolCallId ?? '').trim()
       const toolName = String(event?.toolName ?? '').trim()
       const paths = deriveToolPaths(toolName, event?.args)
       if (toolCallId !== '') {
         state.toolCallIndex.set(toolCallId, { toolName, paths })
       }
+      currentTurn.recentToolEvents = [
+        ...(currentTurn.recentToolEvents ?? []).filter((item) => String(item?.toolCallId ?? '') !== toolCallId),
+        {
+          toolCallId,
+          toolName,
+          args: event?.args,
+          details: undefined,
+          content: [],
+          timestamp: new Date().toISOString(),
+        },
+      ]
     })
 
     pi.on('tool_result', (event) => {
+      const currentTurn = getCurrentTurn()
       const toolCallId = String(event?.toolCallId ?? '').trim()
       if (toolCallId === '') {
         return
@@ -571,6 +636,17 @@ export function createRequestTelemetryExtension({ cwd = process.cwd() } = {}) {
         toolName: current.toolName,
         paths: [...new Set([...current.paths, ...resultPaths])],
       })
+      currentTurn.recentToolEvents = [
+        ...(currentTurn.recentToolEvents ?? []).filter((item) => String(item?.toolCallId ?? '') !== toolCallId),
+        {
+          toolCallId,
+          toolName: current.toolName,
+          args: event?.input,
+          details: event?.details,
+          content: Array.isArray(event?.content) ? event.content : [],
+          timestamp: new Date().toISOString(),
+        },
+      ]
     })
 
     pi.on('message_end', async (event) => {
