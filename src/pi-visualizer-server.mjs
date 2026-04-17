@@ -445,6 +445,7 @@ npm run dev:visualizer:ui</pre>
 export async function startVisualizerServer(config, overrides = {}) {
   const host = String(overrides.host ?? readVisualizerHost()).trim() || '127.0.0.1'
   const port = Number.isFinite(Number(overrides.port)) ? Number(overrides.port) : readVisualizerPort()
+  const sockets = new Set()
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -494,6 +495,13 @@ export async function startVisualizerServer(config, overrides = {}) {
     }
   })
 
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.on('close', () => {
+      sockets.delete(socket)
+    })
+  })
+
   await new Promise((resolve, reject) => {
     server.once('error', reject)
     server.listen(port, host, () => {
@@ -509,14 +517,44 @@ export async function startVisualizerServer(config, overrides = {}) {
     port,
     url,
     async close() {
-      await new Promise((resolve, reject) => {
+      await new Promise((resolve) => {
+        const finish = () => {
+          for (const socket of sockets) {
+            socket.destroy()
+          }
+          sockets.clear()
+          resolve()
+        }
+
+        const timeout = setTimeout(() => {
+          if (typeof server.closeIdleConnections === 'function') {
+            server.closeIdleConnections()
+          }
+          if (typeof server.closeAllConnections === 'function') {
+            server.closeAllConnections()
+          }
+          finish()
+        }, 1000)
+
         server.close((error) => {
+          clearTimeout(timeout)
           if (error) {
-            reject(error)
+            finish()
             return
           }
-          resolve()
+          finish()
         })
+
+        if (typeof server.closeIdleConnections === 'function') {
+          server.closeIdleConnections()
+        }
+        if (typeof server.closeAllConnections === 'function') {
+          server.closeAllConnections()
+        }
+
+        for (const socket of sockets) {
+          socket.end()
+        }
       })
     },
   }
